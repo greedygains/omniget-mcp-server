@@ -19,10 +19,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 COPY . .
 
 # Build only the headless standalone server binary in release mode.
-RUN --mount=type=cache,target=/usr/local/cargo/registry \
-    --mount=type=cache,target=/usr/local/cargo/git \
-    --mount=type=cache,target=/build/target \
-    cargo build --release --package omniget-server --bin omniget-server && \
+RUN cargo build --release --package omniget-server --bin omniget-server && \
     cp target/release/omniget-server /build/omniget-server
 
 # ==============================================================================
