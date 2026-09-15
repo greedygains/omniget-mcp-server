@@ -42,19 +42,13 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 
 # Install standalone yt-dlp binary (fulfills MIN_YTDLP_VERSION >= 2026.06.09)
 RUN curl -fsSL https://github.com/yt-dlp/yt-dlp/releases/latest/download/yt-dlp -o /usr/local/bin/yt-dlp \
-    && chmod a+rx /usr/local/bin/yt-dlp
-
-# Create unprivileged system user and group (appuser, UID 1000)
-RUN groupadd -g 1000 appuser && \
-    useradd -u 1000 -g appuser -m -d /home/appuser -s /bin/bash appuser
+    && chmod 755 /usr/local/bin/yt-dlp
 
 # Set up application directory and copy binary from builder
 WORKDIR /app
+COPY --from=builder /build/omniget-server /usr/local/bin/omniget-server
 COPY --from=builder /build/omniget-server /app/omniget-server
-RUN chmod 755 /app/omniget-server && chown appuser:appuser /app/omniget-server
-
-# Switch to non-root user
-USER appuser
+RUN chmod 755 /usr/local/bin/omniget-server && chmod 755 /app/omniget-server
 
 # Configure environment defaults
 # PORT=8080 allows dynamic override by Railway or container orchestrators
@@ -65,5 +59,5 @@ ENV PORT=8080 \
 # Expose default HTTP port
 EXPOSE 8080
 
-# Execute standalone headless MCP server daemon
-ENTRYPOINT ["/app/omniget-server"]
+# Start command
+CMD ["/usr/local/bin/omniget-server"]
