@@ -114,6 +114,26 @@ pub fn check_bearer(headers: &HeaderMap, expected: &str) -> bool {
     constant_time_eq(provided.as_bytes(), expected.as_bytes())
 }
 
+/// Validates if the request is authenticated via Bearer header or URL query parameter (?token=, ?auth=, ?api_key=).
+pub fn is_authenticated(request: &Request, expected: &str) -> bool {
+    if check_bearer(request.headers(), expected) {
+        return true;
+    }
+
+    if let Some(query) = request.uri().query() {
+        for (key, val) in url::form_urlencoded::parse(query.as_bytes()) {
+            if (key == "token" || key == "auth" || key == "api_key")
+                && !expected.is_empty()
+                && constant_time_eq(val.trim().as_bytes(), expected.as_bytes())
+            {
+                return true;
+            }
+        }
+    }
+
+    false
+}
+
 /// Axum middleware enforcing Bearer token authentication on protected endpoints.
 /// Unconditionally allows `GET /health`.
 pub async fn auth_middleware(
@@ -126,7 +146,7 @@ pub async fn auth_middleware(
         return next.run(request).await;
     }
 
-    if !check_bearer(request.headers(), &state.expected_token) {
+    if !is_authenticated(&request, &state.expected_token) {
         return unauthorized_response();
     }
 

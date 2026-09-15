@@ -102,7 +102,7 @@ impl Drop for SessionGuard {
 }
 
 /// Handler for `GET /sse`: Establishes the SSE stream and emits the initial endpoint event.
-pub async fn sse_get_handler() -> impl IntoResponse {
+pub async fn sse_get_handler(req: Request) -> impl IntoResponse {
     let session_id = Uuid::new_v4().to_string();
     let store = global_session_store().clone();
     let (tx, mut rx) = mpsc::channel::<Event>(SESSION_CHANNEL_CAPACITY);
@@ -110,7 +110,13 @@ pub async fn sse_get_handler() -> impl IntoResponse {
     store.register(session_id.clone(), tx).await;
     tracing::info!("Established new MCP SSE session: {session_id}");
 
-    let endpoint_path = format!("/messages?sessionId={session_id}");
+    let query_str = req.uri().query().unwrap_or("");
+    let token_param = url::form_urlencoded::parse(query_str.as_bytes())
+        .find(|(k, _)| k == "token" || k == "auth" || k == "api_key")
+        .map(|(k, v)| format!("&{}={}", k, v))
+        .unwrap_or_default();
+
+    let endpoint_path = format!("/messages?sessionId={session_id}{token_param}");
     let initial_event = Event::default()
         .event("endpoint")
         .data(endpoint_path);
