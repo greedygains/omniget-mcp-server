@@ -48,7 +48,8 @@ RUN curl -fsSL https://github.com/yt-dlp/yt-dlp/releases/latest/download/yt-dlp 
 WORKDIR /app
 COPY --from=builder /build/omniget-server /usr/local/bin/omniget-server
 COPY --from=builder /build/omniget-server /app/omniget-server
-RUN chmod 755 /usr/local/bin/omniget-server && chmod 755 /app/omniget-server
+COPY start.sh /app/start.sh
+RUN chmod 755 /usr/local/bin/omniget-server && chmod -R 755 /app
 
 # Configure environment defaults
 # PORT=8080 allows dynamic override by Railway or container orchestrators
@@ -60,4 +61,4 @@ ENV PORT=8080 \
 EXPOSE 8080
 
 # Start command
-CMD ["/usr/local/bin/omniget-server"]
+CMD ["sh", "/app/start.sh"]
