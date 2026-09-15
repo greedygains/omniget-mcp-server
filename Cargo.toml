@@ -1,0 +1,12 @@
+[workspace]
+members = [
+    "omniget-core",
+    "omniget-server",
+]
+default-members = ["omniget-server"]
+resolver = "2"
+
+[profile.release]
+lto = "thin"
+codegen-units = 1
+strip = true
