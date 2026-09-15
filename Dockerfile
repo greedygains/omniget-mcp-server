@@ -20,7 +20,8 @@ COPY . .
 
 # Build only the headless standalone server binary in release mode.
 RUN cargo build --release --package omniget-server --bin omniget-server && \
-    cp target/release/omniget-server /build/omniget-server
+    cp target/release/omniget-server /build/omniget-server && \
+    chmod 755 /build/omniget-server
 
 # ==============================================================================
 # Stage 2: Minimal Production Runtime
@@ -49,7 +50,8 @@ RUN groupadd -g 1000 appuser && \
 
 # Set up application directory and copy binary from builder
 WORKDIR /app
-COPY --from=builder --chown=appuser:appuser /build/omniget-server /app/omniget-server
+COPY --from=builder /build/omniget-server /app/omniget-server
+RUN chmod 755 /app/omniget-server && chown appuser:appuser /app/omniget-server
 
 # Switch to non-root user
 USER appuser
@@ -62,10 +64,6 @@ ENV PORT=8080 \
 
 # Expose default HTTP port
 EXPOSE 8080
-
-# Native Docker healthcheck querying the public /health endpoint with dynamic port resolution
-HEALTHCHECK --interval=30s --timeout=5s --start-period=5s --retries=3 \
-    CMD curl -f "http://localhost:${PORT:-8080}/health" || exit 1
 
 # Execute standalone headless MCP server daemon
 ENTRYPOINT ["/app/omniget-server"]
