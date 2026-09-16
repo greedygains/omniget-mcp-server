@@ -59,6 +59,14 @@ pub fn build_router(state: AppState) -> Router {
             "/api/media/info",
             get(crate::rest::media_info_get_handler).post(crate::rest::media_info_post_handler),
         )
+        .route(
+            "/api/instagram/post",
+            get(crate::rest::instagram_post_get_handler).post(crate::rest::instagram_post_post_handler),
+        )
+        .route(
+            "/api/facebook/post",
+            get(crate::rest::facebook_post_get_handler).post(crate::rest::facebook_post_post_handler),
+        )
         .layer(axum::middleware::from_fn_with_state(
             auth_state,
             crate::auth::auth_middleware,

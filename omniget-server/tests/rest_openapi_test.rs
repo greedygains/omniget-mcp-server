@@ -104,6 +104,40 @@ async fn test_t1_f11_rest_media_info_contract() {
     );
 }
 
+/// T1.6: POST /api/instagram/post contract accepts URL and validates schema.
+#[tokio::test]
+async fn test_t1_f11_rest_instagram_post_contract() {
+    let server = TestServer::start().await;
+    let payload = json!({
+        "url": "https://www.instagram.com/p/C_abc123/"
+    });
+
+    let res = server.post_json_authed("/api/instagram/post", &payload).await;
+    assert!(
+        res.status() == StatusCode::OK
+            || res.status() == StatusCode::FORBIDDEN
+            || res.status() == StatusCode::BAD_GATEWAY
+            || res.status() == StatusCode::NOT_FOUND
+    );
+}
+
+/// T1.7: POST /api/facebook/post contract accepts URL and validates schema.
+#[tokio::test]
+async fn test_t1_f11_rest_facebook_post_contract() {
+    let server = TestServer::start().await;
+    let payload = json!({
+        "url": "https://www.facebook.com/zuck/posts/10115432729910941"
+    });
+
+    let res = server.post_json_authed("/api/facebook/post", &payload).await;
+    assert!(
+        res.status() == StatusCode::OK
+            || res.status() == StatusCode::FORBIDDEN
+            || res.status() == StatusCode::BAD_GATEWAY
+            || res.status() == StatusCode::NOT_FOUND
+    );
+}
+
 /// T2.1: Unauthenticated request to REST endpoint returns HTTP 401 Unauthorized.
 #[tokio::test]
 async fn test_t2_f11_rest_unauthenticated_request_returns_401() {
@@ -261,6 +295,8 @@ async fn test_t1_f12_openapi_contains_all_core_paths() {
         "/api/x/post",
         "/api/x/thread",
         "/api/media/info",
+        "/api/instagram/post",
+        "/api/facebook/post",
     ];
 
     for path in expected_paths {

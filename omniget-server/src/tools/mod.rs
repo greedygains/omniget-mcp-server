@@ -1,5 +1,7 @@
 //! Universal extraction tools registry and dispatch router for omniget-server.
 
+pub mod facebook_post;
+pub mod instagram_post;
 pub mod media_info;
 pub mod pdf_text;
 pub mod web_markdown;
@@ -18,7 +20,7 @@ pub struct ToolDefinition {
     pub input_schema: Value,
 }
 
-/// Returns the 5 universal extraction tools provided by OmniGet Server.
+/// Returns the 7 universal extraction tools provided by OmniGet Server.
 pub fn list_tools() -> Vec<ToolDefinition> {
     vec![
         ToolDefinition {
@@ -95,6 +97,34 @@ pub fn list_tools() -> Vec<ToolDefinition> {
                 "required": ["url"]
             }),
         },
+        ToolDefinition {
+            name: "instagram_post".to_string(),
+            description: "Extract public Instagram post, Reel, or carousel metadata, author, caption, hashtags, images, and video streams.".to_string(),
+            input_schema: json!({
+                "type": "object",
+                "properties": {
+                    "url": {
+                        "type": "string",
+                        "description": "Public Instagram post, Reel, or carousel URL (e.g. https://www.instagram.com/p/C_abc123/)"
+                    }
+                },
+                "required": ["url"]
+            }),
+        },
+        ToolDefinition {
+            name: "facebook_post".to_string(),
+            description: "Extract public Facebook post, Reel, or Watch video metadata, author, caption, images, and direct video streams.".to_string(),
+            input_schema: json!({
+                "type": "object",
+                "properties": {
+                    "url": {
+                        "type": "string",
+                        "description": "Public Facebook post, Reel, or Watch video URL (e.g. https://www.facebook.com/page/posts/123456789)"
+                    }
+                },
+                "required": ["url"]
+            }),
+        },
     ]
 }
 
@@ -108,6 +138,8 @@ pub async fn call_tool(name: &str, arguments: Value) -> Result<Value> {
         "web_to_markdown" => web_markdown::call_web_to_markdown(arguments).await,
         "pdf_text" => pdf_text::call_pdf_text(arguments).await,
         "media_info" => media_info::call_media_info(arguments).await,
+        "instagram_post" => instagram_post::call_instagram_post(arguments).await,
+        "facebook_post" => facebook_post::call_facebook_post(arguments).await,
         unknown => Err(anyhow!("Unknown tool: {}", unknown)),
     }
 }

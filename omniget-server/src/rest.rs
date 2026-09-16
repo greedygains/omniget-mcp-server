@@ -12,6 +12,8 @@ use serde_json::{json, Value};
 use std::collections::HashMap;
 
 use crate::tools::{
+    facebook_post::{extract_facebook_post, FacebookArgs, FacebookExtractError},
+    instagram_post::{extract_instagram_post, InstagramArgs, InstagramExtractError},
     media_info::{extract_media_info, MediaInfoArgs},
     pdf_text::{extract_pdf_text, PdfTextArgs},
     web_markdown::web_to_markdown,
@@ -449,6 +451,190 @@ async fn execute_media_info(url: &str) -> Response {
             };
             (status, Json(json!({ "ok": false, "error": msg }))).into_response()
         }
+    }
+}
+
+// ── Instagram Post ──────────────────────────────────────────────────────────
+
+/// `GET /api/instagram/post?url=...` or `?shortcode=...`
+pub async fn instagram_post_get_handler(req: Request) -> Response {
+    let query = parse_query(&req);
+    let target = query
+        .get("url")
+        .map(|s| s.trim())
+        .filter(|s| !s.is_empty())
+        .or_else(|| {
+            query
+                .get("shortcode")
+                .map(|s| s.trim())
+                .filter(|s| !s.is_empty())
+        })
+        .unwrap_or("");
+    execute_instagram_post(target).await
+}
+
+/// `POST /api/instagram/post` (`{"url": "..."}` or `{"shortcode": "..."}`)
+pub async fn instagram_post_post_handler(body: Bytes) -> Response {
+    let args: InstagramArgs = match parse_json_payload(body) {
+        Ok(a) => a,
+        Err(resp) => return *resp,
+    };
+
+    let target = args
+        .url
+        .as_deref()
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+        .or_else(|| {
+            args.shortcode
+                .as_deref()
+                .map(str::trim)
+                .filter(|s| !s.is_empty())
+        })
+        .unwrap_or("");
+    execute_instagram_post(target).await
+}
+
+async fn execute_instagram_post(target: &str) -> Response {
+    if target.is_empty() {
+        return (
+            StatusCode::BAD_REQUEST,
+            Json(json!({
+                "ok": false,
+                "error": "Missing required parameter 'url' or 'shortcode'"
+            })),
+        )
+            .into_response();
+    }
+
+    match extract_instagram_post(target).await {
+        Ok(post) => match serde_json::to_value(post) {
+            Ok(v) => (StatusCode::OK, Json(v)).into_response(),
+            Err(e) => (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(json!({ "ok": false, "error": e.to_string() })),
+            )
+                .into_response(),
+        },
+        Err(InstagramExtractError::InvalidInput(msg))
+        | Err(InstagramExtractError::InvalidDomain(msg))
+        | Err(InstagramExtractError::UnsupportedUrl(msg)) => (
+            StatusCode::BAD_REQUEST,
+            Json(json!({ "ok": false, "error": msg })),
+        )
+            .into_response(),
+        Err(InstagramExtractError::NotFound(msg)) => (
+            StatusCode::NOT_FOUND,
+            Json(json!({ "ok": false, "error": msg })),
+        )
+            .into_response(),
+        Err(InstagramExtractError::PrivateOrLoginRequired(msg)) => (
+            StatusCode::FORBIDDEN,
+            Json(json!({ "ok": false, "error": msg })),
+        )
+            .into_response(),
+        Err(InstagramExtractError::UpstreamError(msg)) => (
+            StatusCode::BAD_GATEWAY,
+            Json(json!({ "ok": false, "error": msg })),
+        )
+            .into_response(),
+        Err(InstagramExtractError::Timeout(msg)) => (
+            StatusCode::GATEWAY_TIMEOUT,
+            Json(json!({ "ok": false, "error": msg })),
+        )
+            .into_response(),
+    }
+}
+
+// ── Facebook Post ───────────────────────────────────────────────────────────
+
+/// `GET /api/facebook/post?url=...` or `?id=...`
+pub async fn facebook_post_get_handler(req: Request) -> Response {
+    let query = parse_query(&req);
+    let target = query
+        .get("url")
+        .map(|s| s.trim())
+        .filter(|s| !s.is_empty())
+        .or_else(|| {
+            query
+                .get("id")
+                .map(|s| s.trim())
+                .filter(|s| !s.is_empty())
+        })
+        .unwrap_or("");
+    execute_facebook_post(target).await
+}
+
+/// `POST /api/facebook/post` (`{"url": "..."}` or `{"id": "..."}`)
+pub async fn facebook_post_post_handler(body: Bytes) -> Response {
+    let args: FacebookArgs = match parse_json_payload(body) {
+        Ok(a) => a,
+        Err(resp) => return *resp,
+    };
+
+    let target = args
+        .url
+        .as_deref()
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+        .or_else(|| {
+            args.id
+                .as_deref()
+                .map(str::trim)
+                .filter(|s| !s.is_empty())
+        })
+        .unwrap_or("");
+    execute_facebook_post(target).await
+}
+
+async fn execute_facebook_post(target: &str) -> Response {
+    if target.is_empty() {
+        return (
+            StatusCode::BAD_REQUEST,
+            Json(json!({
+                "ok": false,
+                "error": "Missing required parameter 'url' or 'id'"
+            })),
+        )
+            .into_response();
+    }
+
+    match extract_facebook_post(target).await {
+        Ok(post) => match serde_json::to_value(post) {
+            Ok(v) => (StatusCode::OK, Json(v)).into_response(),
+            Err(e) => (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(json!({ "ok": false, "error": e.to_string() })),
+            )
+                .into_response(),
+        },
+        Err(FacebookExtractError::InvalidInput(msg))
+        | Err(FacebookExtractError::InvalidDomain(msg))
+        | Err(FacebookExtractError::UnsupportedUrl(msg)) => (
+            StatusCode::BAD_REQUEST,
+            Json(json!({ "ok": false, "error": msg })),
+        )
+            .into_response(),
+        Err(FacebookExtractError::NotFound(msg)) => (
+            StatusCode::NOT_FOUND,
+            Json(json!({ "ok": false, "error": msg })),
+        )
+            .into_response(),
+        Err(FacebookExtractError::PrivateOrLoginWall(msg)) => (
+            StatusCode::FORBIDDEN,
+            Json(json!({ "ok": false, "error": msg })),
+        )
+            .into_response(),
+        Err(FacebookExtractError::UpstreamError(msg)) => (
+            StatusCode::BAD_GATEWAY,
+            Json(json!({ "ok": false, "error": msg })),
+        )
+            .into_response(),
+        Err(FacebookExtractError::Timeout(msg)) => (
+            StatusCode::GATEWAY_TIMEOUT,
+            Json(json!({ "ok": false, "error": msg })),
+        )
+            .into_response(),
     }
 }
 
@@ -1020,6 +1206,178 @@ pub fn build_openapi_spec() -> Value {
                         },
                         "502": {
                             "description": "Bad gateway: media metadata extraction failure"
+                        }
+                    }
+                }
+            },
+            "/api/instagram/post": {
+                "get": {
+                    "summary": "Instagram Post Extraction (GET)",
+                    "description": "Extracts public Instagram post, Reel, or carousel metadata, author, caption, hashtags, and media streams.",
+                    "security": [
+                        { "BearerAuth": [] }
+                    ],
+                    "parameters": [
+                        {
+                            "name": "url",
+                            "in": "query",
+                            "required": false,
+                            "schema": { "type": "string" },
+                            "description": "Public Instagram post URL (e.g. https://www.instagram.com/p/C_abc123/)"
+                        },
+                        {
+                            "name": "shortcode",
+                            "in": "query",
+                            "required": false,
+                            "schema": { "type": "string" },
+                            "description": "Instagram shortcode"
+                        }
+                    ],
+                    "responses": {
+                        "200": {
+                            "description": "InstagramPost object with author and media details"
+                        },
+                        "400": {
+                            "description": "Bad request: invalid domain, unsupported URL, or invalid shortcode"
+                        },
+                        "401": {
+                            "description": "Unauthorized: missing or invalid Bearer token"
+                        },
+                        "403": {
+                            "description": "Forbidden: post is private or requires login"
+                        },
+                        "404": {
+                            "description": "Not found: post does not exist or was deleted"
+                        },
+                        "502": {
+                            "description": "Bad gateway: upstream extraction failure"
+                        }
+                    }
+                },
+                "post": {
+                    "summary": "Instagram Post Extraction (POST)",
+                    "description": "Extracts public Instagram post, Reel, or carousel metadata, author, caption, hashtags, and media streams.",
+                    "security": [
+                        { "BearerAuth": [] }
+                    ],
+                    "requestBody": {
+                        "required": true,
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "type": "object",
+                                    "properties": {
+                                        "url": { "type": "string", "description": "Public Instagram post URL" },
+                                        "shortcode": { "type": "string", "description": "Instagram shortcode" }
+                                    }
+                                }
+                            }
+                        }
+                    },
+                    "responses": {
+                        "200": {
+                            "description": "InstagramPost object with author and media details"
+                        },
+                        "400": {
+                            "description": "Bad request: invalid domain, unsupported URL, or invalid shortcode"
+                        },
+                        "401": {
+                            "description": "Unauthorized: missing or invalid Bearer token"
+                        },
+                        "403": {
+                            "description": "Forbidden: post is private or requires login"
+                        },
+                        "404": {
+                            "description": "Not found: post does not exist or was deleted"
+                        },
+                        "502": {
+                            "description": "Bad gateway: upstream extraction failure"
+                        }
+                    }
+                }
+            },
+            "/api/facebook/post": {
+                "get": {
+                    "summary": "Facebook Post Extraction (GET)",
+                    "description": "Extracts public Facebook post, Reel, or Watch video metadata, author, caption, images, and direct video streams.",
+                    "security": [
+                        { "BearerAuth": [] }
+                    ],
+                    "parameters": [
+                        {
+                            "name": "url",
+                            "in": "query",
+                            "required": false,
+                            "schema": { "type": "string" },
+                            "description": "Public Facebook post URL (e.g. https://www.facebook.com/page/posts/123456789)"
+                        },
+                        {
+                            "name": "id",
+                            "in": "query",
+                            "required": false,
+                            "schema": { "type": "string" },
+                            "description": "Facebook post or video ID"
+                        }
+                    ],
+                    "responses": {
+                        "200": {
+                            "description": "FacebookPost object with author and media details"
+                        },
+                        "400": {
+                            "description": "Bad request: invalid domain, unsupported URL, or empty input"
+                        },
+                        "401": {
+                            "description": "Unauthorized: missing or invalid Bearer token"
+                        },
+                        "403": {
+                            "description": "Forbidden: post is private or blocked by login wall"
+                        },
+                        "404": {
+                            "description": "Not found: post does not exist or was deleted"
+                        },
+                        "502": {
+                            "description": "Bad gateway: upstream extraction failure"
+                        }
+                    }
+                },
+                "post": {
+                    "summary": "Facebook Post Extraction (POST)",
+                    "description": "Extracts public Facebook post, Reel, or Watch video metadata, author, caption, images, and direct video streams.",
+                    "security": [
+                        { "BearerAuth": [] }
+                    ],
+                    "requestBody": {
+                        "required": true,
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "type": "object",
+                                    "properties": {
+                                        "url": { "type": "string", "description": "Public Facebook post URL" },
+                                        "id": { "type": "string", "description": "Facebook post or video ID" }
+                                    }
+                                }
+                            }
+                        }
+                    },
+                    "responses": {
+                        "200": {
+                            "description": "FacebookPost object with author and media details"
+                        },
+                        "400": {
+                            "description": "Bad request: invalid domain, unsupported URL, or empty input"
+                        },
+                        "401": {
+                            "description": "Unauthorized: missing or invalid Bearer token"
+                        },
+                        "403": {
+                            "description": "Forbidden: post is private or blocked by login wall"
+                        },
+                        "404": {
+                            "description": "Not found: post does not exist or was deleted"
+                        },
+                        "502": {
+                            "description": "Bad gateway: upstream extraction failure"
                         }
                     }
                 }

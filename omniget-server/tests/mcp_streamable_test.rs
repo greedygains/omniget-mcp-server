@@ -80,19 +80,15 @@ async fn test_t1_f4_mcp_tools_list() {
         .as_array()
         .expect("tools array in result");
 
-    let tool_names: Vec<&str> = tools
-        .iter()
-        .map(|t| t["name"].as_str().expect("tool name"))
-        .collect();
-
+    assert_eq!(tools.len(), 7, "tools/list must return exactly 7 extraction tools");
+    let tool_names: Vec<&str> = tools.iter().map(|t| t["name"].as_str().expect("tool name")).collect();
     assert!(tool_names.contains(&"x_post"), "Missing x_post tool");
     assert!(tool_names.contains(&"x_thread"), "Missing x_thread tool");
-    assert!(
-        tool_names.contains(&"web_to_markdown"),
-        "Missing web_to_markdown tool"
-    );
+    assert!(tool_names.contains(&"web_to_markdown"), "Missing web_to_markdown tool");
     assert!(tool_names.contains(&"pdf_text"), "Missing pdf_text tool");
     assert!(tool_names.contains(&"media_info"), "Missing media_info tool");
+    assert!(tool_names.contains(&"instagram_post"), "Missing instagram_post tool");
+    assert!(tool_names.contains(&"facebook_post"), "Missing facebook_post tool");
 
     for tool in tools {
         assert!(tool["description"].is_string());

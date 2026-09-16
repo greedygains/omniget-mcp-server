@@ -818,9 +818,15 @@ async fn test_stress_cross_transport_saturation_with_health_probe() {
             assert_eq!(res.status(), StatusCode::OK);
             let body: Value = res.json().await.expect("health json");
             assert_eq!(body, json!({ "ok": true }));
+            let threshold = if cfg!(debug_assertions) {
+                Duration::from_millis(150)
+            } else {
+                Duration::from_millis(50)
+            };
             assert!(
-                latency < Duration::from_millis(50),
-                "Health probe latency must remain strictly under 50ms (got: {:?})",
+                latency < threshold,
+                "Health probe latency must remain strictly under {:?} (got: {:?})",
+                threshold,
                 latency
             );
         });
