@@ -41,6 +41,38 @@ static HEX_ENTITY_REGEX: LazyLock<Regex> = LazyLock::new(|| {
         .expect("Valid hex entity regex")
 });
 
+static DASH_AUDIO_SET_RE: LazyLock<Regex> = LazyLock::new(|| {
+    Regex::new(r#"(?s)<AdaptationSet[^>]+(?:contentType=["']audio["']|mimeType=["']audio/[^"']*["'])[^>]*>(.*?)</AdaptationSet>"#)
+        .expect("Valid DASH audio adaptation set regex")
+});
+
+static DASH_AUDIO_REP_RE: LazyLock<Regex> = LazyLock::new(|| {
+    Regex::new(r#"(?s)<Representation[^>]+(?:contentType=["']audio["']|mimeType=["']audio/[^"']*["'])[^>]*>(.*?)</Representation>"#)
+        .expect("Valid DASH audio representation regex")
+});
+
+static DASH_BASE_URL_RE: LazyLock<Regex> = LazyLock::new(|| {
+    Regex::new(r#"<BaseURL[^>]*>([^<]+)</BaseURL>"#)
+        .expect("Valid DASH BaseURL regex")
+});
+
+static DASH_DIRECT_AUDIO_URL_RE: LazyLock<Regex> = LazyLock::new(|| {
+    Regex::new(r#"<BaseURL[^>]*>([^<]+\.(?:m4a|mp3|aac)(?:\?[^<]*)?)</BaseURL>"#)
+        .expect("Valid DASH direct audio URL regex")
+});
+
+/// Cleans and unescapes media asset URLs from JSON or DASH manifests.
+pub fn clean_media_url(raw: &str) -> String {
+    let decoded = decode_html_entities(raw.trim().trim_matches('"').trim_matches('\\'));
+    decoded
+        .replace(r"\u0026", "&")
+        .replace(r"\/", "/")
+        .replace("&amp;", "&")
+        .trim()
+        .to_string()
+}
+
+
 // ── Data Models ──────────────────────────────────────────────────────────────
 
 /// Arguments payload for `instagram_post` tool invocations.
@@ -645,14 +677,19 @@ pub fn select_highest_resolution_image(node: &Value) -> Option<String> {
 
 /// Helper to parse DASH MPD manifest and extract audio stream BaseURL
 pub fn extract_audio_from_dash_manifest(manifest: &str) -> Option<String> {
-    let audio_set_re = Regex::new(r#"(?s)<AdaptationSet[^>]+(?:contentType=["']audio["']|mimeType=["']audio/[^"']*["'])[^>]*>(.*?)</AdaptationSet>"#).ok()?;
-    let base_url_re = Regex::new(r#"<BaseURL[^>]*>([^<]+)</BaseURL>"#).ok()?;
+    let unescaped_manifest = manifest.replace(r"\/", "/");
+    let decoded_manifest = if unescaped_manifest.contains("&lt;") {
+        decode_html_entities(&unescaped_manifest)
+    } else {
+        unescaped_manifest
+    };
 
-    if let Some(cap) = audio_set_re.captures(manifest) {
+    // 1. Check AdaptationSet with audio content/mime type
+    if let Some(cap) = DASH_AUDIO_SET_RE.captures(&decoded_manifest) {
         if let Some(inner) = cap.get(1) {
-            if let Some(b_cap) = base_url_re.captures(inner.as_str()) {
+            if let Some(b_cap) = DASH_BASE_URL_RE.captures(inner.as_str()) {
                 if let Some(u) = b_cap.get(1) {
-                    let cleaned = decode_html_entities(u.as_str().trim());
+                    let cleaned = clean_media_url(u.as_str());
                     if cleaned.starts_with("http") {
                         return Some(cleaned);
                     }
@@ -661,10 +698,24 @@ pub fn extract_audio_from_dash_manifest(manifest: &str) -> Option<String> {
         }
     }
 
-    let direct_audio_re = Regex::new(r#"<BaseURL[^>]*>([^<]+\.(?:m4a|mp3|aac)[^<]*)</BaseURL>"#).ok()?;
-    if let Some(cap) = direct_audio_re.captures(manifest) {
+    // 2. Check Representation with audio content/mime type
+    if let Some(cap) = DASH_AUDIO_REP_RE.captures(&decoded_manifest) {
+        if let Some(inner) = cap.get(1) {
+            if let Some(b_cap) = DASH_BASE_URL_RE.captures(inner.as_str()) {
+                if let Some(u) = b_cap.get(1) {
+                    let cleaned = clean_media_url(u.as_str());
+                    if cleaned.starts_with("http") {
+                        return Some(cleaned);
+                    }
+                }
+            }
+        }
+    }
+
+    // 3. Check direct audio extensions in BaseURL
+    if let Some(cap) = DASH_DIRECT_AUDIO_URL_RE.captures(&decoded_manifest) {
         if let Some(u) = cap.get(1) {
-            let cleaned = decode_html_entities(u.as_str().trim());
+            let cleaned = clean_media_url(u.as_str());
             if cleaned.starts_with("http") {
                 return Some(cleaned);
             }
@@ -743,8 +794,13 @@ pub fn extract_audio_from_node(node: &Value) -> (Option<String>, bool, Option<St
         }
     }
 
-    // 3. Check dash_info / video_dash_manifest for audio representation BaseURL
-    if let Some(manifest) = node.pointer("/dash_info/video_dash_manifest").and_then(Value::as_str) {
+    // 3. Check dash_info / video_dash_manifest / dash_manifest for audio representation BaseURL
+    let manifest = node.pointer("/dash_info/video_dash_manifest")
+        .or_else(|| node.get("video_dash_manifest"))
+        .or_else(|| node.get("dash_manifest"))
+        .or_else(|| node.pointer("/video_dash_manifest"))
+        .and_then(Value::as_str);
+    if let Some(manifest) = manifest {
         if let Some(audio_url) = extract_audio_from_dash_manifest(manifest) {
             return (Some(audio_url), true, None, None);
         }
@@ -2870,6 +2926,41 @@ mod tests {
 
         let audio = extract_audio_from_dash_manifest(manifest);
         assert_eq!(audio.as_deref(), Some("https://cdn.instagram.com/audio_stream.m4a"));
+    }
+
+    #[test]
+    fn test_extract_audio_from_dash_manifest_representation_level() {
+        let manifest = r#"
+            <MPD xmlns="urn:mpeg:dash:schema:mpd:2011">
+                <Period>
+                    <AdaptationSet>
+                        <Representation id="audio_1" mimeType="audio/mp4" codecs="mp4a.40.2">
+                            <BaseURL>https://instagram.fsin9-1.fna.fbcdn.net/v/t50.2886-16/audio.mp4?_nc_cat=100&amp;oh=123</BaseURL>
+                        </Representation>
+                    </AdaptationSet>
+                </Period>
+            </MPD>
+        "#;
+        let audio = extract_audio_from_dash_manifest(manifest);
+        assert_eq!(audio.as_deref(), Some("https://instagram.fsin9-1.fna.fbcdn.net/v/t50.2886-16/audio.mp4?_nc_cat=100&oh=123"));
+    }
+
+    #[test]
+    fn test_extract_audio_from_dash_manifest_escaped_json_and_html() {
+        let manifest = r#"&lt;MPD&gt;&lt;AdaptationSet contentType=&quot;audio&quot;&gt;&lt;BaseURL&gt;https:\/\/cdn.instagram.com\/v\/audio.m4a\u0026tag=test&lt;/BaseURL&gt;&lt;/AdaptationSet&gt;&lt;/MPD&gt;"#;
+        let audio = extract_audio_from_dash_manifest(manifest);
+        assert_eq!(audio.as_deref(), Some("https://cdn.instagram.com/v/audio.m4a&tag=test"));
+    }
+
+    #[test]
+    fn test_extract_audio_from_node_root_video_dash_manifest() {
+        let node = json!({
+            "is_video": true,
+            "video_dash_manifest": "<MPD><Period><AdaptationSet contentType=\"audio\"><BaseURL>https://cdn.instagram.com/dash_audio.m4a</BaseURL></AdaptationSet></Period></MPD>"
+        });
+        let (url, has_audio, _, _) = extract_audio_from_node(&node);
+        assert_eq!(url.as_deref(), Some("https://cdn.instagram.com/dash_audio.m4a"));
+        assert!(has_audio);
     }
 
     // ── MCP JSON-RPC Adapter Schema Test ─────────────────────────────────────

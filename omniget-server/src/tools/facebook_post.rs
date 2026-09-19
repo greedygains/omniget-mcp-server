@@ -97,11 +97,47 @@ static FB_AUDIO_STREAM_RE: LazyLock<Regex> = LazyLock::new(|| {
             \\"playback_audio_url\\" \s*:\s* \\"((?:\\[^"]|[^"\\])+)\\" |
             "dash_audio_url" \s*:\s* "([^"]+)" |
             \\"dash_audio_url\\" \s*:\s* \\"((?:\\[^"]|[^"\\])+)\\" |
-            "audio" \s*:\s* \[\s*\{\s*"[^"]*"\s*:\s*"[^"]*",\s*"base_url"\s*:\s*"([^"]+)" |
-            \\"audio\\" \s*:\s* \[\s*\\\{\s*\\"[^"]*\\"\s*:\s*\\"[^"]*\\",\s*\\"base_url\\"\s*:\s*\\"((?:\\[^"]|[^"\\])+)\\"
+            "audio_sd_url" \s*:\s* "([^"]+)" |
+            \\"audio_sd_url\\" \s*:\s* \\"((?:\\[^"]|[^"\\])+)\\" |
+            "audio_hd_url" \s*:\s* "([^"]+)" |
+            \\"audio_hd_url\\" \s*:\s* \\"((?:\\[^"]|[^"\\])+)\\" |
+            "audio_src" \s*:\s* "([^"]+)" |
+            \\"audio_src\\" \s*:\s* \\"((?:\\[^"]|[^"\\])+)\\" |
+            "audio" \s*:\s* \[\s*\{ [^}]*? "base_url" \s*:\s* "([^"]+)" |
+            \\"audio\\" \s*:\s* \[\s*\\\{ [^}]*? \\"base_url\\" \s*:\s* \\"((?:\\[^"]|[^"\\])+)\\"
         )
     "#).expect("Valid FB audio stream extraction regex")
 });
+
+static FB_DASH_MANIFEST_RE: LazyLock<Regex> = LazyLock::new(|| {
+    Regex::new(r#"(?x)
+        (?:
+            "dash_manifest" \s*:\s* "((?:\\.|[^"\\])*)" |
+            \\"dash_manifest\\" \s*:\s* \\"((?:\\[^"]|[^"\\])+)\\"
+        )
+    "#).expect("Valid FB DASH manifest extraction regex")
+});
+
+static FB_DASH_AUDIO_SET_RE: LazyLock<Regex> = LazyLock::new(|| {
+    Regex::new(r#"(?s)<AdaptationSet[^>]+(?:contentType=["']audio["']|mimeType=["']audio/[^"']*["'])[^>]*>(.*?)</AdaptationSet>"#)
+        .expect("Valid FB DASH audio adaptation set regex")
+});
+
+static FB_DASH_AUDIO_REP_RE: LazyLock<Regex> = LazyLock::new(|| {
+    Regex::new(r#"(?s)<Representation[^>]+(?:contentType=["']audio["']|mimeType=["']audio/[^"']*["'])[^>]*>(.*?)</Representation>"#)
+        .expect("Valid FB DASH audio representation regex")
+});
+
+static FB_DASH_BASE_URL_RE: LazyLock<Regex> = LazyLock::new(|| {
+    Regex::new(r#"<BaseURL[^>]*>([^<]+)</BaseURL>"#)
+        .expect("Valid FB DASH BaseURL regex")
+});
+
+static FB_DASH_DIRECT_AUDIO_URL_RE: LazyLock<Regex> = LazyLock::new(|| {
+    Regex::new(r#"<BaseURL[^>]*>([^<]+\.(?:m4a|mp3|aac)(?:\?[^<]*)?)</BaseURL>"#)
+        .expect("Valid FB DASH direct audio URL regex")
+});
+
 
 static SCONTENT_IMAGE_RE: LazyLock<Regex> = LazyLock::new(|| {
     Regex::new(r#"https://scontent[^"'\s<>]+\.(?:jpg|png|webp)[^"'\s<>]*"#)
@@ -1195,6 +1231,56 @@ pub fn extract_video_streams_from_html(html: &str) -> (Vec<String>, Vec<String>)
     (hd_streams, sd_streams)
 }
 
+/// Helper to parse DASH MPD manifest and extract audio stream BaseURL for Facebook
+pub fn extract_audio_from_dash_manifest(manifest: &str) -> Option<String> {
+    let unescaped_manifest = manifest.replace(r"\/", "/");
+    let decoded_manifest = if unescaped_manifest.contains("&lt;") {
+        decode_html_entities(&unescaped_manifest)
+    } else {
+        unescaped_manifest
+    };
+
+    // 1. Check AdaptationSet with audio content/mime type
+    if let Some(cap) = FB_DASH_AUDIO_SET_RE.captures(&decoded_manifest) {
+        if let Some(inner) = cap.get(1) {
+            if let Some(b_cap) = FB_DASH_BASE_URL_RE.captures(inner.as_str()) {
+                if let Some(u) = b_cap.get(1) {
+                    let cleaned = clean_facebook_cdn_url(u.as_str());
+                    if cleaned.starts_with("http") {
+                        return Some(cleaned);
+                    }
+                }
+            }
+        }
+    }
+
+    // 2. Check Representation with audio content/mime type
+    if let Some(cap) = FB_DASH_AUDIO_REP_RE.captures(&decoded_manifest) {
+        if let Some(inner) = cap.get(1) {
+            if let Some(b_cap) = FB_DASH_BASE_URL_RE.captures(inner.as_str()) {
+                if let Some(u) = b_cap.get(1) {
+                    let cleaned = clean_facebook_cdn_url(u.as_str());
+                    if cleaned.starts_with("http") {
+                        return Some(cleaned);
+                    }
+                }
+            }
+        }
+    }
+
+    // 3. Direct audio extension check in BaseURL
+    if let Some(cap) = FB_DASH_DIRECT_AUDIO_URL_RE.captures(&decoded_manifest) {
+        if let Some(u) = cap.get(1) {
+            let cleaned = clean_facebook_cdn_url(u.as_str());
+            if cleaned.starts_with("http") {
+                return Some(cleaned);
+            }
+        }
+    }
+
+    None
+}
+
 /// Scans Facebook HTML for direct audio stream representations.
 pub fn extract_audio_stream_from_html(html: &str) -> Option<String> {
     for cap in FB_AUDIO_STREAM_RE.captures_iter(html) {
@@ -1207,6 +1293,23 @@ pub fn extract_audio_stream_from_html(html: &str) -> Option<String> {
             }
         }
     }
+
+    // Fallback: check for dash_manifest embedded in script tags or JSON payloads
+    if let Some(cap) = FB_DASH_MANIFEST_RE.captures(html) {
+        let raw_manifest = cap.get(1).or_else(|| cap.get(2)).map(|m| m.as_str()).unwrap_or("");
+        if !raw_manifest.is_empty() {
+            let unescaped = raw_manifest
+                .replace(r#"\""#, "\"")
+                .replace(r"\/", "/")
+                .replace(r"\n", "\n")
+                .replace(r"\t", "\t")
+                .replace(r"\r", "");
+            if let Some(audio) = extract_audio_from_dash_manifest(&unescaped) {
+                return Some(audio);
+            }
+        }
+    }
+
     None
 }
 
@@ -1459,6 +1562,7 @@ pub async fn fetch_via_ytdlp(
     let mut media_items = Vec::new();
     let mut audio_url = None;
     let mut best_audio_br: u64 = 0;
+    let mut has_progressive_audio = false;
 
     if let Some(formats) = json_val.get("formats").and_then(Value::as_array) {
         // 1. Scan for standalone audio stream
@@ -1489,6 +1593,7 @@ pub async fn fetch_via_ytdlp(
             let acodec = fmt.get("acodec").and_then(Value::as_str).unwrap_or("none");
             let url = fmt.get("url").and_then(Value::as_str).unwrap_or("");
             if vcodec != "none" && acodec != "none" && !acodec.is_empty() && url.starts_with("http") {
+                has_progressive_audio = true;
                 let format_id = fmt.get("format_id").and_then(Value::as_str).unwrap_or("");
                 if (format_id == "hd" || format_id.contains("hd")) && hd_url.is_none() {
                     hd_url = Some(clean_facebook_cdn_url(url));
@@ -1570,7 +1675,7 @@ pub async fn fetch_via_ytdlp(
         .to_string();
 
     let thumbnail_url = images.first().cloned();
-    let has_audio = audio_url.is_some() || !videos.is_empty();
+    let has_audio = audio_url.is_some() || has_progressive_audio;
 
     for v in &videos {
         media_items.push(FacebookMediaItem {
@@ -2655,7 +2760,29 @@ mod tests {
 
         let html_none = r#"<div>No audio here</div>"#;
         assert_eq!(extract_audio_stream_from_html(html_none), None);
+
+        // Test base_url as first key in audio array
+        let html_audio_first_key = r#"{"audio":[{"base_url":"https:\/\/video.xx.fbcdn.net\/v\/audio_first.m4a"}]}"#;
+        assert_eq!(
+            extract_audio_stream_from_html(html_audio_first_key),
+            Some("https://video.xx.fbcdn.net/v/audio_first.m4a".to_string())
+        );
+
+        // Test audio_sd_url
+        let html_audio_sd = r#"{"audio_sd_url":"https:\/\/video.xx.fbcdn.net\/v\/audio_sd.m4a"}"#;
+        assert_eq!(
+            extract_audio_stream_from_html(html_audio_sd),
+            Some("https://video.xx.fbcdn.net/v/audio_sd.m4a".to_string())
+        );
+
+        // Test dash_manifest in HTML
+        let html_dash_manifest = r#"<script>{"dash_manifest":"<MPD><Period><AdaptationSet contentType=\"audio\"><BaseURL>https:\/\/video.xx.fbcdn.net\/dash_manifest_audio.m4a<\/BaseURL><\/AdaptationSet><\/Period><\/MPD>"}</script>"#;
+        assert_eq!(
+            extract_audio_stream_from_html(html_dash_manifest),
+            Some("https://video.xx.fbcdn.net/dash_manifest_audio.m4a".to_string())
+        );
     }
+
 
     // ── MCP Adapter Argument Handling Tests ──────────────────────────────────
 
