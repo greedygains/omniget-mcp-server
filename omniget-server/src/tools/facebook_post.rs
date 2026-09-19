@@ -63,14 +63,14 @@ static TITLE_TAG_RE: LazyLock<Regex> = LazyLock::new(|| {
 static HD_STREAM_RE: LazyLock<Regex> = LazyLock::new(|| {
     Regex::new(r#"(?x)
         (?:
-            "browser_native_hd_url" \s*:\s* "([^"]+)" |
             "playable_url_quality_hd" \s*:\s* "([^"]+)" |
             "hd_src" \s*:\s* "([^"]+)" |
             "hd_src_no_ratelimit" \s*:\s* "([^"]+)" |
-            \\"browser_native_hd_url\\" \s*:\s* \\"((?:\\[^"]|[^"\\])+)\\" |
+            "browser_native_hd_url" \s*:\s* "([^"]+)" |
             \\"playable_url_quality_hd\\" \s*:\s* \\"((?:\\[^"]|[^"\\])+)\\" |
             \\"hd_src\\" \s*:\s* \\"((?:\\[^"]|[^"\\])+)\\" |
-            \\"hd_src_no_ratelimit\\" \s*:\s* \\"((?:\\[^"]|[^"\\])+)\\"
+            \\"hd_src_no_ratelimit\\" \s*:\s* \\"((?:\\[^"]|[^"\\])+)\\" |
+            \\"browser_native_hd_url\\" \s*:\s* \\"((?:\\[^"]|[^"\\])+)\\"
         )
     "#).expect("Valid HD stream extraction regex")
 });
@@ -78,16 +78,29 @@ static HD_STREAM_RE: LazyLock<Regex> = LazyLock::new(|| {
 static SD_STREAM_RE: LazyLock<Regex> = LazyLock::new(|| {
     Regex::new(r#"(?x)
         (?:
-            "browser_native_sd_url" \s*:\s* "([^"]+)" |
             "playable_url" \s*:\s* "([^"]+)" |
             "sd_src" \s*:\s* "([^"]+)" |
             "sd_src_no_ratelimit" \s*:\s* "([^"]+)" |
-            \\"browser_native_sd_url\\" \s*:\s* \\"((?:\\[^"]|[^"\\])+)\\" |
+            "browser_native_sd_url" \s*:\s* "([^"]+)" |
             \\"playable_url\\" \s*:\s* \\"((?:\\[^"]|[^"\\])+)\\" |
             \\"sd_src\\" \s*:\s* \\"((?:\\[^"]|[^"\\])+)\\" |
-            \\"sd_src_no_ratelimit\\" \s*:\s* \\"((?:\\[^"]|[^"\\])+)\\"
+            \\"sd_src_no_ratelimit\\" \s*:\s* \\"((?:\\[^"]|[^"\\])+)\\" |
+            \\"browser_native_sd_url\\" \s*:\s* \\"((?:\\[^"]|[^"\\])+)\\"
         )
     "#).expect("Valid SD stream extraction regex")
+});
+
+static FB_AUDIO_STREAM_RE: LazyLock<Regex> = LazyLock::new(|| {
+    Regex::new(r#"(?x)
+        (?:
+            "playback_audio_url" \s*:\s* "([^"]+)" |
+            \\"playback_audio_url\\" \s*:\s* \\"((?:\\[^"]|[^"\\])+)\\" |
+            "dash_audio_url" \s*:\s* "([^"]+)" |
+            \\"dash_audio_url\\" \s*:\s* \\"((?:\\[^"]|[^"\\])+)\\" |
+            "audio" \s*:\s* \[\s*\{\s*"[^"]*"\s*:\s*"[^"]*",\s*"base_url"\s*:\s*"([^"]+)" |
+            \\"audio\\" \s*:\s* \[\s*\\\{\s*\\"[^"]*\\"\s*:\s*\\"[^"]*\\",\s*\\"base_url\\"\s*:\s*\\"((?:\\[^"]|[^"\\])+)\\"
+        )
+    "#).expect("Valid FB audio stream extraction regex")
 });
 
 static SCONTENT_IMAGE_RE: LazyLock<Regex> = LazyLock::new(|| {
@@ -150,6 +163,12 @@ pub struct FacebookMediaItem {
     /// Duration in seconds for video items, if available
     #[serde(skip_serializing_if = "Option::is_none")]
     pub duration_secs: Option<f64>,
+    /// Direct URL to standalone audio track (.m4a/.mp3), if available
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub audio_url: Option<String>,
+    /// Whether this media item includes an audio track
+    #[serde(default)]
+    pub has_audio: bool,
 }
 
 /// Comprehensive extracted metadata for a Facebook post, Reel, or Watch video.
@@ -171,6 +190,12 @@ pub struct FacebookPost {
     pub images: Vec<String>,
     /// Flat list of direct playable video stream URLs (HD/SD MP4)
     pub videos: Vec<String>,
+    /// Direct URL to standalone audio track (.m4a/.mp3) for AI speech transcription
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub audio_url: Option<String>,
+    /// Whether the post/video includes an audio track
+    #[serde(default)]
+    pub has_audio: bool,
     /// Overall post media classification: "post", "photo", "video", "reel", or "carousel"
     pub media_type: String,
     /// Detailed individual media items (e.g. photos in an album or progressive video streams)
@@ -1170,6 +1195,21 @@ pub fn extract_video_streams_from_html(html: &str) -> (Vec<String>, Vec<String>)
     (hd_streams, sd_streams)
 }
 
+/// Scans Facebook HTML for direct audio stream representations.
+pub fn extract_audio_stream_from_html(html: &str) -> Option<String> {
+    for cap in FB_AUDIO_STREAM_RE.captures_iter(html) {
+        for i in 1..cap.len() {
+            if let Some(m) = cap.get(i) {
+                let url = clean_facebook_cdn_url(m.as_str());
+                if url.starts_with("http") {
+                    return Some(url);
+                }
+            }
+        }
+    }
+    None
+}
+
 /// Extracts high-resolution content images from HTML, filtering out avatars, emojis, and icons.
 pub fn extract_attached_images_from_html(html: &str, primary_image: Option<&str>) -> Vec<String> {
     let mut images = Vec::new();
@@ -1417,19 +1457,38 @@ pub async fn fetch_via_ytdlp(
     let mut videos = Vec::new();
     let mut images = Vec::new();
     let mut media_items = Vec::new();
+    let mut audio_url = None;
+    let mut best_audio_br: u64 = 0;
 
-    // Parse progressive video formats (HD preferred, then SD)
-    // Arithmetic safety: calculate pixel area using saturating_mul
     if let Some(formats) = json_val.get("formats").and_then(Value::as_array) {
+        // 1. Scan for standalone audio stream
+        for fmt in formats {
+            let acodec = fmt.get("acodec").and_then(Value::as_str).unwrap_or("none");
+            let vcodec = fmt.get("vcodec").and_then(Value::as_str).unwrap_or("none");
+            let url = fmt.get("url").and_then(Value::as_str).unwrap_or("");
+            if acodec != "none" && !acodec.is_empty() && (vcodec == "none" || vcodec.is_empty()) && url.starts_with("http") {
+                let abr = fmt.get("abr").and_then(Value::as_f64).unwrap_or(0.0) as u64;
+                let tbr = fmt.get("tbr").and_then(Value::as_f64).unwrap_or(0.0) as u64;
+                let br = abr.max(tbr);
+                if br >= best_audio_br {
+                    best_audio_br = br;
+                    audio_url = Some(clean_facebook_cdn_url(url));
+                }
+            }
+        }
+
+        // 2. Parse video formats: PRIORITIZE progressive formats with audio!
         let mut hd_url = None;
         let mut sd_url = None;
         let mut best_fmt: Option<&Value> = None;
         let mut best_pixel_area: u64 = 0;
 
+        // Pass 1: Progressive formats WITH audio (vcodec != "none" && acodec != "none")
         for fmt in formats {
             let vcodec = fmt.get("vcodec").and_then(Value::as_str).unwrap_or("none");
+            let acodec = fmt.get("acodec").and_then(Value::as_str).unwrap_or("none");
             let url = fmt.get("url").and_then(Value::as_str).unwrap_or("");
-            if vcodec != "none" && url.starts_with("http") {
+            if vcodec != "none" && acodec != "none" && !acodec.is_empty() && url.starts_with("http") {
                 let format_id = fmt.get("format_id").and_then(Value::as_str).unwrap_or("");
                 if (format_id == "hd" || format_id.contains("hd")) && hd_url.is_none() {
                     hd_url = Some(clean_facebook_cdn_url(url));
@@ -1443,6 +1502,30 @@ pub async fn fetch_via_ytdlp(
                 if pixel_area >= best_pixel_area {
                     best_pixel_area = pixel_area;
                     best_fmt = Some(fmt);
+                }
+            }
+        }
+
+        // Pass 2: Fallback to video-only formats if no progressive format with audio was found
+        if hd_url.is_none() && sd_url.is_none() && best_fmt.is_none() {
+            for fmt in formats {
+                let vcodec = fmt.get("vcodec").and_then(Value::as_str).unwrap_or("none");
+                let url = fmt.get("url").and_then(Value::as_str).unwrap_or("");
+                if vcodec != "none" && url.starts_with("http") {
+                    let format_id = fmt.get("format_id").and_then(Value::as_str).unwrap_or("");
+                    if (format_id == "hd" || format_id.contains("hd")) && hd_url.is_none() {
+                        hd_url = Some(clean_facebook_cdn_url(url));
+                    } else if (format_id == "sd" || format_id.contains("sd")) && sd_url.is_none() {
+                        sd_url = Some(clean_facebook_cdn_url(url));
+                    }
+
+                    let w = fmt.get("width").and_then(Value::as_u64).unwrap_or(0);
+                    let h = fmt.get("height").and_then(Value::as_u64).unwrap_or(0);
+                    let pixel_area = w.saturating_mul(h);
+                    if pixel_area >= best_pixel_area {
+                        best_pixel_area = pixel_area;
+                        best_fmt = Some(fmt);
+                    }
                 }
             }
         }
@@ -1487,6 +1570,7 @@ pub async fn fetch_via_ytdlp(
         .to_string();
 
     let thumbnail_url = images.first().cloned();
+    let has_audio = audio_url.is_some() || !videos.is_empty();
 
     for v in &videos {
         media_items.push(FacebookMediaItem {
@@ -1498,6 +1582,8 @@ pub async fn fetch_via_ytdlp(
             thumbnail_url: thumbnail_url.clone(),
             is_video: true,
             duration_secs: json_val.get("duration").and_then(Value::as_f64),
+            audio_url: audio_url.clone(),
+            has_audio,
         });
     }
 
@@ -1511,6 +1597,8 @@ pub async fn fetch_via_ytdlp(
         hashtags,
         images,
         videos,
+        audio_url,
+        has_audio,
         media_type: "video".to_string(),
         media_items,
         thumbnail_url,
@@ -1603,9 +1691,17 @@ pub fn generate_markdown_summary(post: &FacebookPost) -> String {
     let total_images = post.images.len();
     let total_videos = post.videos.len();
 
-    if total_images == 0 && total_videos == 0 && post.media_items.is_empty() {
+    if total_images == 0 && total_videos == 0 && post.media_items.is_empty() && post.audio_url.is_none() {
         md.push_str("*(No attached media found)*\n\n");
     } else {
+        // Direct audio stream track for AI speech processing
+        if let Some(ref audio) = post.audio_url {
+            md.push_str(&format!(
+                "- **Audio Track**: [Direct Audio Stream (.m4a/.mp3)]({}) 🎵 *(Optimized for AI speech transcription & translation)*\n",
+                audio
+            ));
+        }
+
         let mut item_num = 1;
 
         if !post.media_items.is_empty() {
@@ -1619,10 +1715,15 @@ pub fn generate_markdown_summary(post: &FacebookPost) -> String {
                     let duration_str = item.duration_secs
                         .map(|d| format!(" [Duration: {:.1}s]", d))
                         .unwrap_or_default();
+                    let audio_badge = if item.has_audio || post.has_audio {
+                        " 🎬 *(Includes audio track)*"
+                    } else {
+                        " 🔇 *(Muted / Video-only)*"
+                    };
 
                     md.push_str(&format!(
-                        "- **Item {} (Video)**: [Direct Video Stream{}{}]({})\n",
-                        item_num, quality_label, duration_str, item.url
+                        "- **Item {} (Video)**: [Direct Video Stream{}{}]({}){}\n",
+                        item_num, quality_label, duration_str, item.url, audio_badge
                     ));
                     if let Some(ref thumb) = item.thumbnail_url {
                         md.push_str(&format!("  - Poster Image: [Thumbnail]({})\n", thumb));
@@ -1653,9 +1754,14 @@ pub fn generate_markdown_summary(post: &FacebookPost) -> String {
                 } else {
                     " (.mp4)"
                 };
+                let audio_badge = if post.has_audio {
+                    " 🎬 *(Includes audio track)*"
+                } else {
+                    " 🔇 *(Muted / Video-only)*"
+                };
                 md.push_str(&format!(
-                    "- **Item {} (Video)**: [Direct Video Stream{}]({})\n",
-                    item_num, quality_label, vid_url
+                    "- **Item {} (Video)**: [Direct Video Stream{}]({}){}\n",
+                    item_num, quality_label, vid_url, audio_badge
                 ));
                 item_num += 1;
             }
@@ -1804,6 +1910,7 @@ pub async fn extract_facebook_post(input: &str) -> Result<FacebookPost, Facebook
 
     // Step 3: Tier 2 Direct Video Stream Regex Extraction
     let (hd_streams, sd_streams) = extract_video_streams_from_html(&html);
+    let audio_url = extract_audio_stream_from_html(&html);
 
     let mut videos = Vec::new();
     for v in hd_streams {
@@ -1865,6 +1972,7 @@ pub async fn extract_facebook_post(input: &str) -> Result<FacebookPost, Facebook
     let caption = og.description.as_deref().map(normalize_caption).unwrap_or_default();
     let hashtags = extract_hashtags(&caption);
     let is_video = !videos.is_empty() || url_info.is_video;
+    let has_audio = audio_url.is_some() || is_video;
     let media_type = if is_video {
         if url_info.kind == "reel" { "reel".to_string() } else { "video".to_string() }
     } else if images.len() > 1 {
@@ -1888,6 +1996,8 @@ pub async fn extract_facebook_post(input: &str) -> Result<FacebookPost, Facebook
             thumbnail_url: thumbnail_url.clone(),
             is_video: true,
             duration_secs: None,
+            audio_url: audio_url.clone(),
+            has_audio,
         });
     }
     for img in &images {
@@ -1900,6 +2010,8 @@ pub async fn extract_facebook_post(input: &str) -> Result<FacebookPost, Facebook
             thumbnail_url: None,
             is_video: false,
             duration_secs: None,
+            audio_url: None,
+            has_audio: false,
         });
     }
 
@@ -1911,6 +2023,8 @@ pub async fn extract_facebook_post(input: &str) -> Result<FacebookPost, Facebook
         hashtags,
         images,
         videos,
+        audio_url,
+        has_audio,
         media_type,
         media_items,
         thumbnail_url,
@@ -2487,6 +2601,8 @@ mod tests {
             hashtags: vec!["privacy".into(), "facebook".into()],
             images: vec!["https://lookaside.fbsbx.com/preview.jpg".into()],
             videos: vec!["https://video.xx.fbcdn.net/stream_hd.mp4".into()],
+            audio_url: Some("https://video.xx.fbcdn.net/audio_128k.m4a".into()),
+            has_audio: true,
             media_type: "video".into(),
             media_items: vec![
                 FacebookMediaItem {
@@ -2498,6 +2614,8 @@ mod tests {
                     thumbnail_url: Some("https://lookaside.fbsbx.com/preview.jpg".into()),
                     is_video: true,
                     duration_secs: Some(42.5),
+                    audio_url: Some("https://video.xx.fbcdn.net/audio_128k.m4a".into()),
+                    has_audio: true,
                 }
             ],
             thumbnail_url: Some("https://lookaside.fbsbx.com/preview.jpg".into()),
@@ -2519,9 +2637,24 @@ mod tests {
         assert!(md.contains("### Caption\n\nHow to share with just friends."));
         assert!(md.contains("### Hashtags\n\n`#privacy` `#facebook`"));
         assert!(md.contains("### Media Gallery"));
-        assert!(md.contains("- **Item 1 (Video)**: [Direct Video Stream (HD .mp4) [Duration: 42.5s]](https://video.xx.fbcdn.net/stream_hd.mp4)"));
+        assert!(md.contains("- **Audio Track**: [Direct Audio Stream (.m4a/.mp3)](https://video.xx.fbcdn.net/audio_128k.m4a) 🎵"));
+        assert!(md.contains("- **Item 1 (Video)**: [Direct Video Stream (HD .mp4) [Duration: 42.5s]](https://video.xx.fbcdn.net/stream_hd.mp4) 🎬 *(Includes audio track)*"));
         assert!(md.contains("### Video Player & Links"));
         assert!(md.contains("- **Web Player**: [Facebook Watch Player](https://www.facebook.com/watch/?v=10153231379946729)"));
+    }
+
+    #[test]
+    fn test_extract_audio_stream_from_html() {
+        let html_playback = r#"{"playback_audio_url":"https:\/\/video.xx.fbcdn.net\/v\/t42\/audio.m4a?_nc_cat=1"}"#;
+        let audio = extract_audio_stream_from_html(html_playback);
+        assert_eq!(audio, Some("https://video.xx.fbcdn.net/v/t42/audio.m4a?_nc_cat=1".to_string()));
+
+        let html_dash = r#"{"dash_audio_url":"https:\/\/video.xx.fbcdn.net\/v\/t42\/dash_audio.m4a"}"#;
+        let audio_dash = extract_audio_stream_from_html(html_dash);
+        assert_eq!(audio_dash, Some("https://video.xx.fbcdn.net/v/t42/dash_audio.m4a".to_string()));
+
+        let html_none = r#"<div>No audio here</div>"#;
+        assert_eq!(extract_audio_stream_from_html(html_none), None);
     }
 
     // ── MCP Adapter Argument Handling Tests ──────────────────────────────────

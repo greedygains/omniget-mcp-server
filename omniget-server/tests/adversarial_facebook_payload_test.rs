@@ -309,6 +309,8 @@ fn test_format_large_metrics() {
         hashtags: vec![],
         images: vec![],
         videos: vec![],
+        audio_url: None,
+        has_audio: false,
         media_type: "post".into(),
         media_items: vec![],
         thumbnail_url: None,
@@ -340,6 +342,8 @@ fn test_timestamp_negative_safely_unknown() {
         hashtags: vec![],
         images: vec![],
         videos: vec![],
+        audio_url: None,
+        has_audio: false,
         media_type: "post".into(),
         media_items: vec![],
         thumbnail_url: None,
@@ -376,6 +380,8 @@ fn test_markdown_carousel_formatting() {
             "https://lookaside.fbsbx.com/2.jpg".into(),
         ],
         videos: vec![],
+        audio_url: None,
+        has_audio: false,
         media_type: "carousel".into(),
         media_items: vec![
             FacebookMediaItem {
@@ -387,6 +393,8 @@ fn test_markdown_carousel_formatting() {
                 thumbnail_url: None,
                 is_video: false,
                 duration_secs: None,
+                audio_url: None,
+                has_audio: false,
             },
             FacebookMediaItem {
                 id: Some("2".into()),
@@ -397,6 +405,8 @@ fn test_markdown_carousel_formatting() {
                 thumbnail_url: None,
                 is_video: false,
                 duration_secs: None,
+                audio_url: None,
+                has_audio: false,
             },
         ],
         thumbnail_url: Some("https://lookaside.fbsbx.com/1.jpg".into()),
@@ -428,6 +438,8 @@ fn test_markdown_video_formatting() {
         hashtags: vec!["gaming".into()],
         images: vec![],
         videos: vec!["https://video.xx.fbcdn.net/stream_hd.mp4".into()],
+        audio_url: None,
+        has_audio: true,
         media_type: "video".into(),
         media_items: vec![
             FacebookMediaItem {
@@ -439,6 +451,8 @@ fn test_markdown_video_formatting() {
                 thumbnail_url: Some("https://lookaside.fbsbx.com/poster.jpg".into()),
                 is_video: true,
                 duration_secs: Some(120.5),
+                audio_url: None,
+                has_audio: true,
             }
         ],
         thumbnail_url: Some("https://lookaside.fbsbx.com/poster.jpg".into()),

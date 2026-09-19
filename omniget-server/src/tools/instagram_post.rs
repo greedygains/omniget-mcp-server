@@ -93,6 +93,12 @@ pub struct InstagramMediaItem {
     /// Duration in seconds for video items, if available
     #[serde(skip_serializing_if = "Option::is_none")]
     pub duration_secs: Option<f64>,
+    /// Direct URL to standalone audio track (.m4a/.mp3), if available
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub audio_url: Option<String>,
+    /// Whether this media item includes an audio track
+    #[serde(default)]
+    pub has_audio: bool,
 }
 
 /// Comprehensive extracted metadata for an Instagram post, Reel, or carousel.
@@ -117,6 +123,18 @@ pub struct InstagramPost {
     pub images: Vec<String>,
     /// Flat list of direct playable video stream URLs
     pub videos: Vec<String>,
+    /// Direct URL to standalone audio track (.m4a/.mp3) for AI speech transcription
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub audio_url: Option<String>,
+    /// Whether the post/video includes an audio track
+    #[serde(default)]
+    pub has_audio: bool,
+    /// Music title or sound name, if available
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub audio_title: Option<String>,
+    /// Music artist or sound creator, if available
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub audio_artist: Option<String>,
     /// Overall post media classification: "photo", "video", or "carousel"
     pub media_type: String,
     /// Detailed individual media items (e.g. all slides in a carousel)
@@ -625,6 +643,127 @@ pub fn select_highest_resolution_image(node: &Value) -> Option<String> {
         .map(|s| s.to_string())
 }
 
+/// Helper to parse DASH MPD manifest and extract audio stream BaseURL
+pub fn extract_audio_from_dash_manifest(manifest: &str) -> Option<String> {
+    let audio_set_re = Regex::new(r#"(?s)<AdaptationSet[^>]+(?:contentType=["']audio["']|mimeType=["']audio/[^"']*["'])[^>]*>(.*?)</AdaptationSet>"#).ok()?;
+    let base_url_re = Regex::new(r#"<BaseURL[^>]*>([^<]+)</BaseURL>"#).ok()?;
+
+    if let Some(cap) = audio_set_re.captures(manifest) {
+        if let Some(inner) = cap.get(1) {
+            if let Some(b_cap) = base_url_re.captures(inner.as_str()) {
+                if let Some(u) = b_cap.get(1) {
+                    let cleaned = decode_html_entities(u.as_str().trim());
+                    if cleaned.starts_with("http") {
+                        return Some(cleaned);
+                    }
+                }
+            }
+        }
+    }
+
+    let direct_audio_re = Regex::new(r#"<BaseURL[^>]*>([^<]+\.(?:m4a|mp3|aac)[^<]*)</BaseURL>"#).ok()?;
+    if let Some(cap) = direct_audio_re.captures(manifest) {
+        if let Some(u) = cap.get(1) {
+            let cleaned = decode_html_entities(u.as_str().trim());
+            if cleaned.starts_with("http") {
+                return Some(cleaned);
+            }
+        }
+    }
+
+    None
+}
+
+/// Extracts audio stream and music metadata from GraphQL / REST media JSON nodes.
+/// Returns `(audio_url, has_audio, audio_title, audio_artist)`.
+pub fn extract_audio_from_node(node: &Value) -> (Option<String>, bool, Option<String>, Option<String>) {
+    // 1. Check clips_metadata
+    if let Some(clips) = node.get("clips_metadata") {
+        if let Some(music_info) = clips.get("music_info") {
+            if let Some(asset) = music_info.get("music_asset_info") {
+                let audio_url = asset
+                    .get("progressive_download_url")
+                    .and_then(Value::as_str)
+                    .filter(|s| s.starts_with("http"))
+                    .map(String::from);
+                let title = asset.get("title").and_then(Value::as_str).map(String::from);
+                let artist = asset.get("display_artist").and_then(Value::as_str).map(String::from);
+                if audio_url.is_some() {
+                    return (audio_url, true, title, artist);
+                }
+            }
+        }
+        if let Some(orig) = clips.get("original_sound_info") {
+            let audio_url = orig
+                .get("progressive_download_url")
+                .and_then(Value::as_str)
+                .filter(|s| s.starts_with("http"))
+                .map(String::from);
+            let title = orig
+                .get("original_audio_title")
+                .or_else(|| orig.get("audio_asset_id"))
+                .and_then(Value::as_str)
+                .map(String::from);
+            let artist = orig
+                .pointer("/ig_artist/username")
+                .or_else(|| orig.pointer("/ig_artist/full_name"))
+                .and_then(Value::as_str)
+                .map(String::from);
+            if audio_url.is_some() {
+                return (audio_url, true, title, artist);
+            }
+        }
+    }
+
+    // 2. Check music_metadata
+    if let Some(mm) = node.get("music_metadata") {
+        if let Some(music_info) = mm.get("music_info") {
+            if let Some(asset) = music_info.get("music_asset_info") {
+                let audio_url = asset
+                    .get("progressive_download_url")
+                    .and_then(Value::as_str)
+                    .filter(|s| s.starts_with("http"))
+                    .map(String::from);
+                let title = asset.get("title").and_then(Value::as_str).map(String::from);
+                let artist = asset.get("display_artist").and_then(Value::as_str).map(String::from);
+                if audio_url.is_some() {
+                    return (audio_url, true, title, artist);
+                }
+            }
+        }
+        if let Some(orig) = mm.get("original_sound_info") {
+            let audio_url = orig
+                .get("progressive_download_url")
+                .and_then(Value::as_str)
+                .filter(|s| s.starts_with("http"))
+                .map(String::from);
+            if audio_url.is_some() {
+                return (audio_url, true, None, None);
+            }
+        }
+    }
+
+    // 3. Check dash_info / video_dash_manifest for audio representation BaseURL
+    if let Some(manifest) = node.pointer("/dash_info/video_dash_manifest").and_then(Value::as_str) {
+        if let Some(audio_url) = extract_audio_from_dash_manifest(manifest) {
+            return (Some(audio_url), true, None, None);
+        }
+    }
+
+    // 4. Fallback: check has_audio boolean flag
+    let has_audio_flag = node.get("has_audio").and_then(Value::as_bool);
+    let is_video = node.get("is_video").and_then(Value::as_bool).unwrap_or(false)
+        || node.get("video_url").is_some()
+        || node.get("video_versions").is_some();
+
+    let has_audio = match has_audio_flag {
+        Some(b) => b,
+        None => is_video,
+    };
+
+    (None, has_audio, None, None)
+}
+
 /// Unrolls multi-image carousels or single media nodes into structured items and flat URL lists.
 /// Returns `(images, videos, media_items, media_type, thumbnail_url)`.
 pub fn unroll_media_from_node(
@@ -676,6 +815,7 @@ pub fn unroll_media_from_node(
                             .map(|n| n as u32);
 
                         if is_video {
+                            let (child_audio, child_has_audio, _, _) = extract_audio_from_node(child);
                             if let Some(ref v_url) = vid_url {
                                 if !videos.contains(v_url) {
                                     videos.push(v_url.clone());
@@ -695,6 +835,8 @@ pub fn unroll_media_from_node(
                                 thumbnail_url: img_url,
                                 is_video: true,
                                 duration_secs: child.get("video_duration").and_then(|v| v.as_f64()),
+                                audio_url: child_audio,
+                                has_audio: child_has_audio,
                             });
                         } else if let Some(i_url) = img_url {
                             if !images.contains(&i_url) {
@@ -709,6 +851,8 @@ pub fn unroll_media_from_node(
                                 thumbnail_url: None,
                                 is_video: false,
                                 duration_secs: None,
+                                audio_url: None,
+                                has_audio: false,
                             });
                         }
                     }
@@ -749,6 +893,7 @@ pub fn unroll_media_from_node(
                     || child.get("is_video").and_then(|v| v.as_bool()).unwrap_or(false);
 
                 if is_video {
+                    let (child_audio, child_has_audio, _, _) = extract_audio_from_node(child);
                     if let Some(ref v_url) = best_video {
                         if !videos.contains(v_url) {
                             videos.push(v_url.clone());
@@ -768,6 +913,8 @@ pub fn unroll_media_from_node(
                         thumbnail_url: best_image,
                         is_video: true,
                         duration_secs: child.get("video_duration").and_then(|v| v.as_f64()),
+                        audio_url: child_audio,
+                        has_audio: child_has_audio,
                     });
                 } else if let Some(i_url) = best_image {
                     if !images.contains(&i_url) {
@@ -782,6 +929,8 @@ pub fn unroll_media_from_node(
                         thumbnail_url: None,
                         is_video: false,
                         duration_secs: None,
+                        audio_url: None,
+                        has_audio: false,
                     });
                 }
             }
@@ -837,6 +986,7 @@ pub fn unroll_media_from_node(
         .map(|n| n as u32);
 
     if is_video {
+        let (audio_url, has_audio, _, _) = extract_audio_from_node(node);
         if let Some(ref v_url) = vid_url {
             videos.push(v_url.clone());
         }
@@ -853,6 +1003,8 @@ pub fn unroll_media_from_node(
             thumbnail_url: img_url,
             is_video: true,
             duration_secs: node.get("video_duration").and_then(|v| v.as_f64()),
+            audio_url,
+            has_audio,
         });
         (images, videos, media_items, "video".to_string(), thumbnail_url)
     } else {
@@ -870,6 +1022,8 @@ pub fn unroll_media_from_node(
                 thumbnail_url: None,
                 is_video: false,
                 duration_secs: None,
+                audio_url: None,
+                has_audio: false,
             });
         }
         (images, videos, media_items, "photo".to_string(), thumbnail_url)
@@ -992,18 +1146,36 @@ pub fn generate_markdown_summary(post: &InstagramPost) -> String {
     let total_images = post.images.len();
     let total_videos = post.videos.len();
 
-    if total_images == 0 && total_videos == 0 {
+    if total_images == 0 && total_videos == 0 && post.audio_url.is_none() {
         md.push_str("*(No attached media found)*\n");
     } else {
+        // Direct audio stream track for AI speech processing
+        if let Some(ref audio) = post.audio_url {
+            let music_info = match (&post.audio_title, &post.audio_artist) {
+                (Some(title), Some(artist)) => format!(" (Track: \"{}\" by {})", title, artist),
+                (Some(title), None) => format!(" (Track: \"{}\")", title),
+                _ => String::new(),
+            };
+            md.push_str(&format!(
+                "- **Audio Track**: [Direct Audio Stream (.m4a/.mp3)]({}) 🎵 *(Optimized for AI speech transcription & translation{})*\n",
+                audio, music_info
+            ));
+        }
+
         let mut item_num = 1;
 
         // Display individual items from media_items if present
         if !post.media_items.is_empty() {
             for item in &post.media_items {
                 if item.is_video {
+                    let audio_badge = if item.has_audio || post.has_audio {
+                        " 🎬 *(Includes audio track)*"
+                    } else {
+                        " 🔇 *(Muted / Video-only)*"
+                    };
                     md.push_str(&format!(
-                        "- **Item {} (Video)**: [Direct Video Stream (.mp4)]({})\n",
-                        item_num, item.url
+                        "- **Item {} (Video)**: [Direct Video Stream (.mp4)]({}){}\n",
+                        item_num, item.url, audio_badge
                     ));
                     if let Some(ref thumb) = item.thumbnail_url {
                         md.push_str(&format!("  - Poster Image: [Thumbnail]({})\n", thumb));
@@ -1025,9 +1197,14 @@ pub fn generate_markdown_summary(post: &InstagramPost) -> String {
                 item_num += 1;
             }
             for vid_url in &post.videos {
+                let audio_badge = if post.has_audio {
+                    " 🎬 *(Includes audio track)*"
+                } else {
+                    " 🔇 *(Muted / Video-only)*"
+                };
                 md.push_str(&format!(
-                    "- **Item {} (Video)**: [Direct Video Stream (.mp4)]({})\n",
-                    item_num, vid_url
+                    "- **Item {} (Video)**: [Direct Video Stream (.mp4)]({}){}\n",
+                    item_num, vid_url, audio_badge
                 ));
                 item_num += 1;
             }
@@ -1120,6 +1297,7 @@ pub fn parse_gql_media_node(media: &Value, shortcode: &str) -> Result<InstagramP
         .or_else(|| media.get("comment_count").and_then(|v| v.as_u64()));
 
     let (images, videos, media_items, media_type, thumbnail_url) = unroll_media_from_node(media);
+    let (audio_url, has_audio, audio_title, audio_artist) = extract_audio_from_node(media);
 
     let mut post = InstagramPost {
         id,
@@ -1131,6 +1309,10 @@ pub fn parse_gql_media_node(media: &Value, shortcode: &str) -> Result<InstagramP
         mentions,
         images,
         videos,
+        audio_url,
+        has_audio,
+        audio_title,
+        audio_artist,
         media_type,
         media_items,
         thumbnail_url,
@@ -1395,6 +1577,8 @@ pub fn parse_embed_html(html: &str, shortcode: &str) -> Result<InstagramPost, In
             thumbnail_url: img_url.clone(),
             is_video: true,
             duration_secs: None,
+            audio_url: None,
+            has_audio: true,
         });
     } else if let Some(i_url) = img_url.clone() {
         media_items.push(InstagramMediaItem {
@@ -1406,6 +1590,8 @@ pub fn parse_embed_html(html: &str, shortcode: &str) -> Result<InstagramPost, In
             thumbnail_url: None,
             is_video: false,
             duration_secs: None,
+            audio_url: None,
+            has_audio: false,
         });
     }
 
@@ -1441,6 +1627,10 @@ pub fn parse_embed_html(html: &str, shortcode: &str) -> Result<InstagramPost, In
         mentions,
         images,
         videos,
+        audio_url: None,
+        has_audio: is_video,
+        audio_title: None,
+        audio_artist: None,
         media_type,
         media_items,
         thumbnail_url: img_url,
@@ -1540,30 +1730,97 @@ pub async fn fetch_via_ytdlp(url: &str, shortcode: &str) -> Result<InstagramPost
     let like_count = json_val.get("like_count").and_then(|v| v.as_u64());
     let comment_count = json_val.get("comment_count").and_then(|v| v.as_u64());
 
-    let mut images = Vec::new();
-    let mut videos = Vec::new();
-    let mut media_items = Vec::new();
+    let mut images: Vec<String> = Vec::new();
+    let mut videos: Vec<String> = Vec::new();
+    let mut media_items: Vec<InstagramMediaItem> = Vec::new();
+
+    // Scan all formats for standalone audio track
+    let mut audio_url = None;
+    let mut best_audio_br: u64 = 0;
+    if let Some(formats) = json_val.get("formats").and_then(Value::as_array) {
+        for f in formats {
+            let acodec = f.get("acodec").and_then(Value::as_str).unwrap_or("none");
+            let vcodec = f.get("vcodec").and_then(Value::as_str).unwrap_or("none");
+            let u = f.get("url").and_then(Value::as_str).unwrap_or("");
+            if acodec != "none" && !acodec.is_empty() && u.starts_with("http") {
+                let is_audio_only = vcodec == "none" || vcodec.is_empty();
+                let abr = f.get("abr").and_then(Value::as_f64).unwrap_or(0.0) as u64;
+                let tbr = f.get("tbr").and_then(Value::as_f64).unwrap_or(0.0) as u64;
+                let br = abr.max(tbr);
+                if is_audio_only && br >= best_audio_br {
+                    best_audio_br = br;
+                    audio_url = Some(u.to_string());
+                } else if audio_url.is_none() && is_audio_only {
+                    audio_url = Some(u.to_string());
+                }
+            }
+        }
+    }
+    let mut has_audio = audio_url.is_some();
 
     // Check for carousel playlist entries
     if let Some(entries) = json_val.get("entries").and_then(|v| v.as_array()) {
         for entry in entries {
             let mut slide_has_video = false;
             if let Some(formats) = entry.get("formats").and_then(|v| v.as_array()) {
-                if let Some(best_f) = formats
+                // Check if entry has standalone audio
+                let mut entry_audio_url = None;
+                let mut entry_best_abr = 0u64;
+                for f in formats {
+                    let acodec = f.get("acodec").and_then(Value::as_str).unwrap_or("none");
+                    let vcodec = f.get("vcodec").and_then(Value::as_str).unwrap_or("none");
+                    let u = f.get("url").and_then(Value::as_str).unwrap_or("");
+                    if acodec != "none" && !acodec.is_empty() && (vcodec == "none" || vcodec.is_empty()) && u.starts_with("http") {
+                        let abr = f.get("abr").and_then(Value::as_f64).unwrap_or(0.0) as u64;
+                        if abr >= entry_best_abr {
+                            entry_best_abr = abr;
+                            entry_audio_url = Some(u.to_string());
+                        }
+                    }
+                }
+
+                // 1. Prioritize progressive muxed format with video AND audio
+                let best_muxed = formats
                     .iter()
                     .filter(|f| {
                         let vcodec = f.get("vcodec").and_then(|v| v.as_str()).unwrap_or("none");
+                        let acodec = f.get("acodec").and_then(|v| v.as_str()).unwrap_or("none");
                         let u = f.get("url").and_then(|v| v.as_str()).unwrap_or("");
-                        vcodec != "none" && u.starts_with("http")
+                        vcodec != "none" && !vcodec.is_empty()
+                            && acodec != "none" && !acodec.is_empty()
+                            && u.starts_with("http")
                     })
                     .max_by_key(|f| {
                         let w = f.get("width").and_then(|v| v.as_u64()).unwrap_or(0);
                         let h = f.get("height").and_then(|v| v.as_u64()).unwrap_or(0);
                         let tbr = f.get("tbr").and_then(|v| v.as_f64()).unwrap_or(0.0) as u64;
                         (w.saturating_mul(h), tbr)
-                    })
-                {
-                    if let Some(vurl) = best_f.get("url").and_then(|v| v.as_str()) {
+                    });
+
+                // 2. Fallback to video-only format
+                let best_f = best_muxed.or_else(|| {
+                    formats
+                        .iter()
+                        .filter(|f| {
+                            let vcodec = f.get("vcodec").and_then(|v| v.as_str()).unwrap_or("none");
+                            let u = f.get("url").and_then(|v| v.as_str()).unwrap_or("");
+                            vcodec != "none" && !vcodec.is_empty() && u.starts_with("http")
+                        })
+                        .max_by_key(|f| {
+                            let w = f.get("width").and_then(|v| v.as_u64()).unwrap_or(0);
+                            let h = f.get("height").and_then(|v| v.as_u64()).unwrap_or(0);
+                            let tbr = f.get("tbr").and_then(|v| v.as_f64()).unwrap_or(0.0) as u64;
+                            (w.saturating_mul(h), tbr)
+                        })
+                });
+
+                if let Some(f) = best_f {
+                    if let Some(vurl) = f.get("url").and_then(|v| v.as_str()) {
+                        let acodec = f.get("acodec").and_then(|v| v.as_str()).unwrap_or("none");
+                        let slide_has_audio = (acodec != "none" && !acodec.is_empty()) || entry_audio_url.is_some();
+                        if slide_has_audio {
+                            has_audio = true;
+                        }
                         videos.push(vurl.to_string());
                         media_items.push(InstagramMediaItem {
                             id: entry.get("id").and_then(|v| v.as_str()).map(|s| s.to_string()),
@@ -1574,6 +1831,8 @@ pub async fn fetch_via_ytdlp(url: &str, shortcode: &str) -> Result<InstagramPost
                             thumbnail_url: entry.get("thumbnail").and_then(|v| v.as_str()).map(|s| s.to_string()),
                             is_video: true,
                             duration_secs: entry.get("duration").and_then(|v| v.as_f64()),
+                            audio_url: entry_audio_url.or_else(|| audio_url.clone()),
+                            has_audio: slide_has_audio,
                         });
                         slide_has_video = true;
                     }
@@ -1592,6 +1851,8 @@ pub async fn fetch_via_ytdlp(url: &str, shortcode: &str) -> Result<InstagramPost
                             thumbnail_url: None,
                             is_video: false,
                             duration_secs: None,
+                            audio_url: None,
+                            has_audio: false,
                         });
                     }
                 }
@@ -1600,21 +1861,48 @@ pub async fn fetch_via_ytdlp(url: &str, shortcode: &str) -> Result<InstagramPost
     } else {
         // Single item / Reel
         if let Some(formats) = json_val.get("formats").and_then(|v| v.as_array()) {
-            if let Some(best_f) = formats
+            // 1. Prioritize progressive muxed format with video AND audio
+            let best_muxed = formats
                 .iter()
                 .filter(|f| {
                     let vcodec = f.get("vcodec").and_then(|v| v.as_str()).unwrap_or("none");
+                    let acodec = f.get("acodec").and_then(|v| v.as_str()).unwrap_or("none");
                     let u = f.get("url").and_then(|v| v.as_str()).unwrap_or("");
-                    vcodec != "none" && u.starts_with("http")
+                    vcodec != "none" && !vcodec.is_empty()
+                        && acodec != "none" && !acodec.is_empty()
+                        && u.starts_with("http")
                 })
                 .max_by_key(|f| {
                     let w = f.get("width").and_then(|v| v.as_u64()).unwrap_or(0);
                     let h = f.get("height").and_then(|v| v.as_u64()).unwrap_or(0);
                     let tbr = f.get("tbr").and_then(|v| v.as_f64()).unwrap_or(0.0) as u64;
                     (w.saturating_mul(h), tbr)
-                })
-            {
-                if let Some(vurl) = best_f.get("url").and_then(|v| v.as_str()) {
+                });
+
+            // 2. Fallback to video-only format
+            let best_f = best_muxed.or_else(|| {
+                formats
+                    .iter()
+                    .filter(|f| {
+                        let vcodec = f.get("vcodec").and_then(|v| v.as_str()).unwrap_or("none");
+                        let u = f.get("url").and_then(|v| v.as_str()).unwrap_or("");
+                        vcodec != "none" && !vcodec.is_empty() && u.starts_with("http")
+                    })
+                    .max_by_key(|f| {
+                        let w = f.get("width").and_then(|v| v.as_u64()).unwrap_or(0);
+                        let h = f.get("height").and_then(|v| v.as_u64()).unwrap_or(0);
+                        let tbr = f.get("tbr").and_then(|v| v.as_f64()).unwrap_or(0.0) as u64;
+                        (w.saturating_mul(h), tbr)
+                    })
+            });
+
+            if let Some(f) = best_f {
+                if let Some(vurl) = f.get("url").and_then(|v| v.as_str()) {
+                    let acodec = f.get("acodec").and_then(|v| v.as_str()).unwrap_or("none");
+                    let item_has_audio = (acodec != "none" && !acodec.is_empty()) || audio_url.is_some();
+                    if item_has_audio {
+                        has_audio = true;
+                    }
                     videos.push(vurl.to_string());
                     media_items.push(InstagramMediaItem {
                         id: Some(post_id.clone()),
@@ -1625,6 +1913,8 @@ pub async fn fetch_via_ytdlp(url: &str, shortcode: &str) -> Result<InstagramPost
                         thumbnail_url: json_val.get("thumbnail").and_then(|v| v.as_str()).map(|s| s.to_string()),
                         is_video: true,
                         duration_secs: json_val.get("duration").and_then(|v| v.as_f64()),
+                        audio_url: audio_url.clone(),
+                        has_audio: item_has_audio,
                     });
                 }
             }
@@ -1643,6 +1933,8 @@ pub async fn fetch_via_ytdlp(url: &str, shortcode: &str) -> Result<InstagramPost
                         thumbnail_url: None,
                         is_video: false,
                         duration_secs: None,
+                        audio_url: None,
+                        has_audio: false,
                     });
                 }
             }
@@ -1679,6 +1971,10 @@ pub async fn fetch_via_ytdlp(url: &str, shortcode: &str) -> Result<InstagramPost
         mentions,
         images,
         videos,
+        audio_url,
+        has_audio,
+        audio_title: None,
+        audio_artist: None,
         media_type,
         media_items,
         thumbnail_url,
@@ -2427,6 +2723,10 @@ mod tests {
             mentions: vec!["agent".into()],
             images: vec!["https://cdn.instagram.com/photo.jpg".into()],
             videos: vec![],
+            audio_url: None,
+            has_audio: false,
+            audio_title: None,
+            audio_artist: None,
             media_type: "photo".into(),
             media_items: vec![InstagramMediaItem {
                 id: Some("post123".into()),
@@ -2437,6 +2737,8 @@ mod tests {
                 thumbnail_url: None,
                 is_video: false,
                 duration_secs: None,
+                audio_url: None,
+                has_audio: false,
             }],
             thumbnail_url: Some("https://cdn.instagram.com/photo.jpg".into()),
             taken_at: Some(1726338600),
@@ -2453,6 +2755,121 @@ mod tests {
         assert!(md.contains("Hello AI agents from Instagram!"));
         assert!(md.contains("`#tech` `#ai`"));
         assert!(md.contains("- **Item 1 (Photo)**: [High-Resolution Image](https://cdn.instagram.com/photo.jpg)"));
+    }
+
+    #[test]
+    fn test_markdown_summary_with_audio_track() {
+        let post = InstagramPost {
+            id: "reel123".into(),
+            shortcode: "C_reel123".into(),
+            url: "https://www.instagram.com/reel/C_reel123/".into(),
+            author: InstagramAuthor {
+                username: "creator".into(),
+                full_name: Some("Creator Name".into()),
+                profile_url: "https://www.instagram.com/creator/".into(),
+                avatar_url: None,
+                is_verified: Some(false),
+            },
+            caption: "Amazing reel with voice".into(),
+            hashtags: vec!["reel".into()],
+            mentions: vec![],
+            images: vec!["https://cdn.instagram.com/poster.jpg".into()],
+            videos: vec!["https://cdn.instagram.com/video.mp4".into()],
+            audio_url: Some("https://cdn.instagram.com/audio.m4a".into()),
+            has_audio: true,
+            audio_title: Some("Viral Track".into()),
+            audio_artist: Some("Top Artist".into()),
+            media_type: "video".into(),
+            media_items: vec![InstagramMediaItem {
+                id: Some("reel123".into()),
+                media_type: "video".into(),
+                url: "https://cdn.instagram.com/video.mp4".into(),
+                width: Some(720),
+                height: Some(1280),
+                thumbnail_url: Some("https://cdn.instagram.com/poster.jpg".into()),
+                is_video: true,
+                duration_secs: Some(30.0),
+                audio_url: Some("https://cdn.instagram.com/audio.m4a".into()),
+                has_audio: true,
+            }],
+            thumbnail_url: Some("https://cdn.instagram.com/poster.jpg".into()),
+            taken_at: Some(1726338600),
+            like_count: Some(500),
+            comment_count: Some(25),
+            markdown: String::new(),
+        };
+
+        let md = generate_markdown_summary(&post);
+        assert!(md.contains("- **Audio Track**: [Direct Audio Stream (.m4a/.mp3)](https://cdn.instagram.com/audio.m4a) 🎵 *(Optimized for AI speech transcription & translation (Track: \"Viral Track\" by Top Artist))*"));
+        assert!(md.contains("- **Item 1 (Video)**: [Direct Video Stream (.mp4)](https://cdn.instagram.com/video.mp4) 🎬 *(Includes audio track)*"));
+        assert!(md.contains("Poster Image: [Thumbnail](https://cdn.instagram.com/poster.jpg)"));
+    }
+
+    #[test]
+    fn test_extract_audio_from_node_music_info() {
+        let node = json!({
+            "is_video": true,
+            "clips_metadata": {
+                "music_info": {
+                    "music_asset_info": {
+                        "progressive_download_url": "https://cdn.instagram.com/audio/music.mp3",
+                        "title": "Summer Song",
+                        "display_artist": "Cool Singer"
+                    }
+                }
+            }
+        });
+
+        let (url, has_audio, title, artist) = extract_audio_from_node(&node);
+        assert_eq!(url.as_deref(), Some("https://cdn.instagram.com/audio/music.mp3"));
+        assert_eq!(has_audio, true);
+        assert_eq!(title.as_deref(), Some("Summer Song"));
+        assert_eq!(artist.as_deref(), Some("Cool Singer"));
+    }
+
+    #[test]
+    fn test_extract_audio_from_node_original_sound() {
+        let node = json!({
+            "is_video": true,
+            "clips_metadata": {
+                "original_sound_info": {
+                    "progressive_download_url": "https://cdn.instagram.com/audio/orig.m4a",
+                    "original_audio_title": "Original voice",
+                    "ig_artist": {
+                        "username": "voice_artist"
+                    }
+                }
+            }
+        });
+
+        let (url, has_audio, title, artist) = extract_audio_from_node(&node);
+        assert_eq!(url.as_deref(), Some("https://cdn.instagram.com/audio/orig.m4a"));
+        assert_eq!(has_audio, true);
+        assert_eq!(title.as_deref(), Some("Original voice"));
+        assert_eq!(artist.as_deref(), Some("voice_artist"));
+    }
+
+    #[test]
+    fn test_extract_audio_from_dash_manifest() {
+        let manifest = r#"
+            <MPD xmlns="urn:mpeg:dash:schema:mpd:2011">
+                <Period>
+                    <AdaptationSet contentType="video" mimeType="video/mp4">
+                        <Representation id="1" bandwidth="1000000">
+                            <BaseURL>https://cdn.instagram.com/video_stream.mp4</BaseURL>
+                        </Representation>
+                    </AdaptationSet>
+                    <AdaptationSet contentType="audio" mimeType="audio/mp4">
+                        <Representation id="2" bandwidth="128000">
+                            <BaseURL>https://cdn.instagram.com/audio_stream.m4a</BaseURL>
+                        </Representation>
+                    </AdaptationSet>
+                </Period>
+            </MPD>
+        "#;
+
+        let audio = extract_audio_from_dash_manifest(manifest);
+        assert_eq!(audio.as_deref(), Some("https://cdn.instagram.com/audio_stream.m4a"));
     }
 
     // ── MCP JSON-RPC Adapter Schema Test ─────────────────────────────────────
