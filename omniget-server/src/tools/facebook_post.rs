@@ -2105,8 +2105,27 @@ pub async fn extract_facebook_post(input: &str) -> Result<FacebookPost, Facebook
         }
     }
 
+    // Step 2: Determine modern fetch target (bypassing legacy permalink.php login-wall on datacenter IPs)
+    let fetch_url = if url_info.canonical_url.contains("permalink.php") || url_info.canonical_url.contains("story.php") {
+        if let Some(ref uid) = url_info.author_handle {
+            format!("https://www.facebook.com/{}/posts/{}/", uid, url_info.id)
+        } else {
+            format!("https://www.facebook.com/posts/{}/", url_info.id)
+        }
+    } else {
+        url_info.canonical_url.clone()
+    };
+
     // Step 2: Tier 1 SSR OpenGraph Extraction
-    let (og, html) = match fetch_via_opengraph(&client, &url_info.canonical_url).await {
+    let fetch_res = match fetch_via_opengraph(&client, &fetch_url).await {
+        Ok(res) => Ok(res),
+        Err(e) if fetch_url != url_info.canonical_url => {
+            fetch_via_opengraph(&client, &url_info.canonical_url).await.or(Err(e))
+        }
+        Err(e) => Err(e),
+    };
+
+    let (og, html) = match fetch_res {
         Ok(res) => res,
         Err(e) => match e {
             FacebookExtractError::PrivateOrLoginWall(_) => {
