@@ -568,3 +568,24 @@ async fn test_user_live_facebook_url() {
     assert!(!mcp_res["result"]["post"]["images"].as_array().unwrap().is_empty());
 }
 
+#[tokio::test]
+async fn test_user_live_facebook_url_peesamac() {
+    let url = "https://www.facebook.com/share/p/1DmHpefU7L/?mibextid=wwXIfr";
+    let server = TestServer::start().await;
+    let mcp_res = server
+        .json_rpc(
+            "tools/call",
+            json!({
+                "name": "facebook_post",
+                "arguments": { "url": url }
+            }),
+        )
+        .await;
+
+    let caption = mcp_res["result"]["post"]["caption"].as_str().unwrap_or("");
+    println!("=== EXTRACTED FULL CAPTION ===\n{}\n==============================", caption);
+    assert!(caption.contains("71 รูปแบบ"), "Caption should contain '71 รูปแบบ'");
+    assert!(caption.contains("Apache 2.0"), "Caption should contain 'Apache 2.0'");
+    assert!(caption.contains("#AISecurity") || mcp_res["result"]["post"]["hashtags"].to_string().contains("aisecurity"), "Should have hashtags");
+}
+

@@ -144,6 +144,30 @@ static SCONTENT_IMAGE_RE: LazyLock<Regex> = LazyLock::new(|| {
         .expect("Valid scontent image extraction regex")
 });
 
+static HTML_TAG_RE: LazyLock<Regex> = LazyLock::new(|| {
+    Regex::new(r"<[^>]+>").expect("Valid HTML tag stripping regex")
+});
+
+static GRAPHQL_MESSAGE_RE: LazyLock<Regex> = LazyLock::new(|| {
+    Regex::new(r#""text"\s*:\s*"((?:\\.|[^"\\])+)"\s*\}\s*,\s*"message_truncation_line_limit""#)
+        .expect("Valid GraphQL message text regex")
+});
+
+static BLOKS_TEXTSPAN_RE: LazyLock<Regex> = LazyLock::new(|| {
+    Regex::new(r#""bk\.data\.TextSpan"\s*:\s*\{text\s*:\s*"((?:\\.|[^"\\])+)""#)
+        .expect("Valid Bloks TextSpan regex")
+});
+
+static RELAY_MESSAGE_RE: LazyLock<Regex> = LazyLock::new(|| {
+    Regex::new(r#""message"\s*:\s*\{[^{}]*?"text"\s*:\s*"((?:\\.|[^"\\])+)""#)
+        .expect("Valid Relay message text regex")
+});
+
+static SERVER_RENDERED_DIV_RE: LazyLock<Regex> = LazyLock::new(|| {
+    Regex::new(r#"<div\s+dir=["']auto["']\s+style=["']text-align:start["']>(.*?)</div>"#)
+        .expect("Valid server rendered div regex")
+});
+
 // ── Data Models ──────────────────────────────────────────────────────────────
 
 /// Arguments payload for `facebook_post` tool invocations.
@@ -733,7 +757,16 @@ pub fn parse_facebook_url(raw: &str) -> Result<FacebookUrlInfo, FacebookExtractE
     if segments.len() >= 3 {
         let author = segments[0].trim();
         let action = segments[1].to_lowercase();
-        let target_id = segments[2].trim();
+        let target_id = if segments.len() >= 4 && action == "posts" {
+            let last = segments.last().unwrap().trim();
+            if validate_post_id(last).is_ok() {
+                last
+            } else {
+                segments[2].trim()
+            }
+        } else {
+            segments[2].trim()
+        };
 
         match action.as_str() {
             "posts" => {
@@ -900,6 +933,89 @@ pub fn normalize_caption(raw: &str) -> String {
 
     let result = cleaned_lines.join("\n");
     result.trim().to_string()
+}
+
+/// Strips HTML tags from an input string.
+pub fn strip_html_tags(input: &str) -> String {
+    HTML_TAG_RE.replace_all(input, "").to_string()
+}
+
+/// Decodes JSON-escaped string content (e.g. Unicode \uXXXX sequences, newlines, escaped quotes).
+pub fn unescape_json_string(raw: &str) -> String {
+    let quoted = format!("\"{}\"", raw);
+    if let Ok(decoded) = serde_json::from_str::<String>(&quoted) {
+        return decoded;
+    }
+    raw.replace(r#"\n"#, "\n")
+        .replace(r#"\""#, "\"")
+        .replace(r#"\/"#, "/")
+        .replace(r#"\t"#, "\t")
+        .replace(r#"\r"#, "")
+        .replace(r#"\\"#, "\\")
+}
+
+/// Scans Facebook HTML response for full untruncated post captions across multiple layers:
+/// 1. GraphQL Relay JSON payload right before `message_truncation_line_limit`
+/// 2. Mobile Bloks JSON `bk.data.TextSpan` payloads
+/// 3. Relay story message objects
+/// 4. Server-rendered `<div dir="auto" style="text-align:start">` paragraph blocks
+pub fn extract_full_caption_from_html(html: &str) -> Option<String> {
+    let mut candidates: Vec<String> = Vec::new();
+
+    // 1. Check GraphQL Relay message text directly preceding message_truncation_line_limit
+    for cap in GRAPHQL_MESSAGE_RE.captures_iter(html) {
+        if let Some(m) = cap.get(1) {
+            let decoded = unescape_json_string(m.as_str());
+            let trimmed = decoded.trim().to_string();
+            if !trimmed.is_empty() {
+                candidates.push(trimmed);
+            }
+        }
+    }
+
+    // 2. Check mobile Bloks TextSpan payloads
+    for cap in BLOKS_TEXTSPAN_RE.captures_iter(html) {
+        if let Some(m) = cap.get(1) {
+            let decoded = unescape_json_string(m.as_str());
+            let trimmed = decoded.trim().to_string();
+            if !trimmed.is_empty() {
+                candidates.push(trimmed);
+            }
+        }
+    }
+
+    // 3. Check Relay story message objects
+    for cap in RELAY_MESSAGE_RE.captures_iter(html) {
+        if let Some(m) = cap.get(1) {
+            let decoded = unescape_json_string(m.as_str());
+            let trimmed = decoded.trim().to_string();
+            if !trimmed.is_empty() {
+                candidates.push(trimmed);
+            }
+        }
+    }
+
+    // 4. Check server-rendered div paragraphs
+    let mut div_paragraphs = Vec::new();
+    for cap in SERVER_RENDERED_DIV_RE.captures_iter(html) {
+        if let Some(m) = cap.get(1) {
+            let stripped = strip_html_tags(m.as_str());
+            let decoded = decode_html_entities(&stripped).trim().to_string();
+            if !decoded.is_empty() {
+                div_paragraphs.push(decoded);
+            }
+        }
+    }
+    if !div_paragraphs.is_empty() {
+        let joined = div_paragraphs.join("\n\n");
+        if !joined.trim().is_empty() {
+            candidates.push(joined);
+        }
+    }
+
+    // Sort by length descending and return the longest valid candidate
+    candidates.sort_by(|a, b| b.len().cmp(&a.len()));
+    candidates.into_iter().next()
 }
 
 /// Extracts unique lowercase hashtags from text.
@@ -2074,7 +2190,18 @@ pub async fn extract_facebook_post(input: &str) -> Result<FacebookPost, Facebook
         is_verified: None,
     };
 
-    let caption = og.description.as_deref().map(normalize_caption).unwrap_or_default();
+    let full_caption_opt = extract_full_caption_from_html(&html);
+    let caption = if let Some(full) = full_caption_opt {
+        let norm_full = normalize_caption(&full);
+        let og_desc = og.description.as_deref().map(normalize_caption).unwrap_or_default();
+        if norm_full.len() > og_desc.len() || og_desc.ends_with("...") {
+            norm_full
+        } else {
+            og_desc
+        }
+    } else {
+        og.description.as_deref().map(normalize_caption).unwrap_or_default()
+    };
     let hashtags = extract_hashtags(&caption);
     let is_video = !videos.is_empty() || url_info.is_video;
     let has_audio = audio_url.is_some() || is_video;
