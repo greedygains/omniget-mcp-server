@@ -2,6 +2,11 @@
 name = "omniget-core"
 version = "0.2.16"
 edition = "2021"
+description = "Core extraction engine for OmniGet standalone MCP server"
+authors = ["OmniGet Authors", "Greedy Gains"]
+license = "GPL-3.0"
+repository = "https://github.com/greedygains/omniget-mcp-server"
+homepage = "https://github.com/greedygains/omniget-mcp-server"
 
 [lib]
 name = "omniget_core"

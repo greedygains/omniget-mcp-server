@@ -16,6 +16,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     && rm -rf /var/lib/apt/lists/*
 
 # Copy repository source files
+ARG BUILD_ID=0
 COPY . .
 
 # Build only the headless standalone server binary in release mode.
@@ -42,11 +43,9 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 RUN curl -fsSL https://github.com/yt-dlp/yt-dlp/releases/latest/download/yt-dlp -o /usr/local/bin/yt-dlp \
     && chmod 755 /usr/local/bin/yt-dlp
 
-# Set up application directory and copy binary from builder
 WORKDIR /app
-COPY --from=builder /build/target/release/omniget-server /usr/local/bin/omniget-server
-COPY start.sh /app/start.sh
-RUN chmod 755 /usr/local/bin/omniget-server && chmod 755 /app/start.sh
+COPY --chmod=755 --from=builder /build/target/release/omniget-server /usr/local/bin/omniget-server
+COPY --chmod=755 start.sh /app/start.sh
 
 # Configure environment defaults
 # PORT=8080 allows dynamic override by Railway or container orchestrators

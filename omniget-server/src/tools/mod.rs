@@ -79,6 +79,10 @@ pub fn list_tools() -> Vec<ToolDefinition> {
                         "type": "string",
                         "description": "Alternative parameter for remote HTTP/HTTPS URL to the PDF document"
                     },
+                    "url_or_path": {
+                        "type": "string",
+                        "description": "Flexible alias for local filesystem path or remote HTTP/HTTPS PDF URL"
+                    },
                     "pages": {
                         "type": "string",
                         "description": "Optional page range filter (e.g. '1-3', '1, 3, 5', 'all'). If omitted, extracts all pages."

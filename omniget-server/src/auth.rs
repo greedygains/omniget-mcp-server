@@ -172,8 +172,8 @@ mod tests {
 
     #[test]
     fn check_bearer_accepts_valid_capital_bearer() {
-        let headers = header_with("Bearer secret-token-42");
-        assert!(check_bearer(&headers, "secret-token-42"));
+        let headers = header_with("Bearer your-secure-token-42");
+        assert!(check_bearer(&headers, "your-secure-token-42"));
     }
 
     #[test]

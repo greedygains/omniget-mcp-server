@@ -291,12 +291,17 @@ async fn test_t1_f12_openapi_contains_all_core_paths() {
         "/sse",
         "/messages",
         "/api/web/markdown",
+        "/api/markdown",
         "/api/pdf/text",
+        "/api/pdf",
         "/api/x/post",
         "/api/x/thread",
         "/api/media/info",
+        "/api/media",
         "/api/instagram/post",
+        "/api/instagram",
         "/api/facebook/post",
+        "/api/facebook",
     ];
 
     for path in expected_paths {

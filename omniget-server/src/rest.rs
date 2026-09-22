@@ -663,7 +663,7 @@ pub async fn openapi_json_handler() -> impl IntoResponse {
 
 /// Generates a valid OpenAPI 3.1.0 JSON document.
 pub fn build_openapi_spec() -> Value {
-    json!({
+    let mut spec = json!({
         "openapi": "3.1.0",
         "info": {
             "title": "OmniGet Standalone MCP Server",
@@ -966,6 +966,7 @@ pub fn build_openapi_spec() -> Value {
                                     "properties": {
                                         "path": { "type": "string", "description": "Local file path" },
                                         "url": { "type": "string", "description": "Remote PDF URL" },
+                                        "url_or_path": { "type": "string", "description": "Local file path or remote PDF URL" },
                                         "pages": { "type": "string", "description": "Page range filter (e.g. 1-3)" }
                                     }
                                 }
@@ -1393,5 +1394,25 @@ pub fn build_openapi_spec() -> Value {
                 }
             }
         }
-    })
+    });
+
+    if let Some(paths) = spec.get_mut("paths").and_then(Value::as_object_mut) {
+        if let Some(p) = paths.get("/api/web/markdown").cloned() {
+            paths.insert("/api/markdown".to_string(), p);
+        }
+        if let Some(p) = paths.get("/api/pdf/text").cloned() {
+            paths.insert("/api/pdf".to_string(), p);
+        }
+        if let Some(p) = paths.get("/api/media/info").cloned() {
+            paths.insert("/api/media".to_string(), p);
+        }
+        if let Some(p) = paths.get("/api/instagram/post").cloned() {
+            paths.insert("/api/instagram".to_string(), p);
+        }
+        if let Some(p) = paths.get("/api/facebook/post").cloned() {
+            paths.insert("/api/facebook".to_string(), p);
+        }
+    }
+
+    spec
 }
