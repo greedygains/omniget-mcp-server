@@ -22,7 +22,7 @@ use tokio::net::TcpStream;
 
 #[tokio::test]
 async fn test_concurrency_flood_100_mixed_requests() {
-    let token = "concurrency-test-secret-token-123";
+    let token = "your-concurrency-token";
     let server = TestServer::spawn_with_token(token).await;
     let base_url = server.base_url.clone();
 

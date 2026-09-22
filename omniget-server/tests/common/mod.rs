@@ -19,7 +19,7 @@ impl TestServer {
     }
 
     pub async fn spawn() -> Self {
-        Self::spawn_with_token("test-secret-bearer-token").await
+        Self::spawn_with_token("your-secure-token").await
     }
 
     pub async fn spawn_with_token(token: &str) -> Self {
@@ -59,7 +59,7 @@ impl TestServer {
         let app = omniget_server::build_router(state);
 
         // Backward-compatibility layer for auth_test where GET /api/web/markdown without params was verified for auth only
-        let app = if token == "my-custom-test-secret-token" {
+        let app = if token == "your-custom-test-token" {
             app.layer(axum::middleware::from_fn(|req: axum::extract::Request, next: axum::middleware::Next| async move {
                 if req.uri().path() == "/api/web/markdown" && req.uri().query().unwrap_or("").is_empty() && req.method() == axum::http::Method::GET {
                     use axum::response::IntoResponse;

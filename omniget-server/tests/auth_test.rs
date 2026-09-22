@@ -121,8 +121,8 @@ async fn test_protected_routes_invalid_scheme_returns_401() {
 
     let bad_auth_headers = [
         "Basic dXNlcjpwYXNz",
-        "Token test-secret-bearer-token",
-        "test-secret-bearer-token",
+        "Token your-secure-token",
+        "your-secure-token",
         "Bearer",
         "Bearer ",
     ];
@@ -145,7 +145,7 @@ async fn test_protected_routes_invalid_scheme_returns_401() {
 
 #[tokio::test]
 async fn test_protected_routes_valid_token_returns_success() {
-    let token = "my-custom-test-secret-token";
+    let token = "your-custom-test-token";
     let server = TestServer::spawn_with_token(token).await;
     let client = reqwest::Client::new();
     let auth_token = &server.auth_token;

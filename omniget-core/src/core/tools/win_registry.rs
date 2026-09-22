@@ -512,13 +512,13 @@ mod tests {
 
     #[test]
     fn parse() {
-        let text = "\r\nHKEY_CURRENT_USER\\Software\\Microsoft\\Windows\\CurrentVersion\\Run\r\n    OneDrive    REG_SZ    \"C:\\Users\\x\\OneDrive.exe\" /background\r\n    Foo Bar    REG_EXPAND_SZ    %LOCALAPPDATA%\\foo.exe\r\n    (Default)    REG_SZ    x\r\n\r\nHKEY_CURRENT_USER\\Software\\Microsoft\\Windows\\CurrentVersion\\Run\\Sub\r\n";
+        let text = "\r\nHKEY_CURRENT_USER\\Software\\Microsoft\\Windows\\CurrentVersion\\Run\r\n    OneDrive    REG_SZ    \"C:\\Programs\\OneDrive\\OneDrive.exe\" /background\r\n    Foo Bar    REG_EXPAND_SZ    %LOCALAPPDATA%\\foo.exe\r\n    (Default)    REG_SZ    x\r\n\r\nHKEY_CURRENT_USER\\Software\\Microsoft\\Windows\\CurrentVersion\\Run\\Sub\r\n";
         let keys = parse_reg_output(text);
         assert_eq!(keys.len(), 2);
         assert_eq!(keys[0].values.len(), 3);
         assert_eq!(keys[0].values[0].name, "OneDrive");
         assert_eq!(keys[0].values[0].kind, "REG_SZ");
-        assert!(keys[0].values[0].data.starts_with("\"C:\\Users"));
+        assert!(keys[0].values[0].data.starts_with("\"C:\\Programs"));
         assert_eq!(keys[0].values[1].name, "Foo Bar");
         assert_eq!(keys[0].values[2].name, "");
         assert_eq!(keys[0].subkeys.len(), 1);

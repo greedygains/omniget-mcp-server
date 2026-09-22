@@ -597,7 +597,7 @@ mod tests {
     fn label_falls_back_to_the_parent_folder_then_to_the_default() {
         let parsed = parse_clip_name("2026-09-09 21-14-03.mkv").expect("OBS");
         let (game, _, known) = game_label(
-            Path::new("/home/eu/Videos/Elden Ring/2026-09-09 21-14-03.mkv"),
+            Path::new("/videos/Elden Ring/2026-09-09 21-14-03.mkv"),
             &parsed,
             &[],
             "Outros",
@@ -606,7 +606,7 @@ mod tests {
         assert!(known);
 
         let (game, _, known) = game_label(
-            Path::new("/home/eu/Videos/Captures/2026-09-09 21-14-03.mkv"),
+            Path::new("/videos/Captures/2026-09-09 21-14-03.mkv"),
             &parsed,
             &[],
             "Outros",
