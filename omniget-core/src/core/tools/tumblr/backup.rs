@@ -823,9 +823,9 @@ mod tests {
 
     #[test]
     fn caminho_relativo_a_raiz_do_espelho() {
-        let root = Path::new("/Users/a/Espelho/meu");
+        let root = Path::new("/var/backup/espelho/meu");
         assert_eq!(
-            rel_to_root(root, "/Users/a/Espelho/meu/media/tumblr/x.jpg"),
+            rel_to_root(root, "/var/backup/espelho/meu/media/tumblr/x.jpg"),
             "media/tumblr/x.jpg"
         );
         assert_eq!(rel_to_root(root, "/fora/x.jpg"), "/fora/x.jpg");

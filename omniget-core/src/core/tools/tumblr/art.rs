@@ -603,12 +603,12 @@ mod tests {
         let mut local = LocalArt::default();
         local.by_name.insert(
             "arte-do-dia.png".into(),
-            "/Users/a/Arte/arte-do-dia.png".into(),
+            "/media/arte-do-dia.png".into(),
         );
         let hits = match_by_name(&mut rows, &local);
         assert_eq!(hits, 1);
         assert_eq!(rows[0].dupe, "name");
-        assert_eq!(rows[0].local_file, "/Users/a/Arte/arte-do-dia.png");
+        assert_eq!(rows[0].local_file, "/media/arte-do-dia.png");
         assert!(rows[1].dupe.is_empty());
     }
 

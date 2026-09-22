@@ -452,11 +452,11 @@ mod tests {
     fn casamento_local_pelo_nome_do_arquivo() {
         let mut rows = rows();
         let mut index = LocalIndex::new();
-        index.insert_file("/Users/a/Tumblr/foto_1280.jpg");
-        index.insert_file("/Users/a/Tumblr/nao-relacionado.png");
+        index.insert_file("/var/data/tumblr/foto_1280.jpg");
+        index.insert_file("/var/data/tumblr/nao-relacionado.png");
         let hits = match_local(&mut rows, &index);
         assert_eq!(hits, 1);
-        assert_eq!(rows[0].local_files, vec!["/Users/a/Tumblr/foto_1280.jpg"]);
+        assert_eq!(rows[0].local_files, vec!["/var/data/tumblr/foto_1280.jpg"]);
         assert!(rows[1].local_files.is_empty());
     }
 
@@ -464,10 +464,10 @@ mod tests {
     fn casamento_local_pelo_id_do_post_ganha_do_nome() {
         let mut rows = rows();
         let mut index = LocalIndex::new();
-        index.insert_file("/Users/a/Tumblr/foto_1280.jpg");
-        index.insert_post("700111222", "/Users/a/Tumblr/certo.jpg");
+        index.insert_file("/var/data/tumblr/foto_1280.jpg");
+        index.insert_post("700111222", "/var/data/tumblr/certo.jpg");
         match_local(&mut rows, &index);
-        assert_eq!(rows[0].local_files, vec!["/Users/a/Tumblr/certo.jpg"]);
+        assert_eq!(rows[0].local_files, vec!["/var/data/tumblr/certo.jpg"]);
     }
 
     #[test]

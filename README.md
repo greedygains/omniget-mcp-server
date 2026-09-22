@@ -1,7 +1,7 @@
 # OmniGet MCP Server (Headless Rust Edition)
 
 > **Universal Social Media, Web & Document Extraction Engine for AI Agents**  
-> *Originally created by [tonhowtf](https://github.com/tonhowtf/omniget) | Re-architected, enhanced & maintained as a standalone headless Rust MCP server by **Greedy Gains**.*
+> *Originally created by [tonhowtf](https://github.com/tonhowtf/omniget) | Re-architected, enhanced & maintained as a standalone headless Rust edition by **Greedy Gains** for non-commercial community benefit.*
 
 [![License: GPL-3.0](https://img.shields.io/badge/License-GPL_3.0-blue.svg)](LICENSE)
 [![Rust: 1.80+](https://img.shields.io/badge/Rust-1.80%2B-orange.svg)](https://www.rust-lang.org/)
@@ -76,7 +76,7 @@ docker build -t omniget-mcp-server .
 # Run the container
 docker run -d \
   -p 8080:8080 \
-  -e AUTH_TOKEN="your-secure-secret-token" \
+  -e AUTH_TOKEN="your-secure-token" \
   --name omniget-mcp \
   omniget-mcp-server
 ```
@@ -99,7 +99,7 @@ git clone https://github.com/greedygains/omniget-mcp-server.git
 cd omniget-mcp-server
 
 # Set your authentication token and run
-export AUTH_TOKEN="your-secure-secret-token"
+export AUTH_TOKEN="your-secure-token"
 cargo run -p omniget-server --release
 ```
 
@@ -201,7 +201,7 @@ Add to `~/.cursor/mcp.json` or project-level `.cursor/mcp.json`:
 This open-source project is built on the foundations of the open-source community:
 
 - **Upstream Project**: The extraction core was originally derived from [OmniGet](https://github.com/tonhowtf/omniget) by **[tonhowtf](https://github.com/tonhowtf)**, a multi-platform downloader application. We express our immense gratitude for their pioneering work on universal media extraction logic.
-- **Greedy Gains Enhancements**:
+- **Greedy Gains Enhancements**: Greedy Gains enhanced and maintains this headless edition for non-commercial community benefit:
   - Decoupled the engine into a standalone, headless microservice free of desktop/Tauri dependencies.
   - Implemented the full **Model Context Protocol (MCP)** specification over Server-Sent Events (SSE) and Streamable HTTP.
   - Architected the **Native Rust Facebook & Instagram extraction engine**, enabling full 100% untruncated caption recovery and cloud datacenter login wall bypass.

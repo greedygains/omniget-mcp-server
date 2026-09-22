@@ -305,7 +305,7 @@ mod tests {
             "-f",
             "bv*[height<=1080]+ba[ext=m4a]/b",
             "-o",
-            "/Users/x/Downloads/%(title).200s [%(id)s].%(ext)s",
+            "/downloads/%(title).200s [%(id)s].%(ext)s",
             "--progress-template",
             "download:%(progress._percent_str)s|eta:%(progress.eta)s",
             "it's",

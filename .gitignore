@@ -1,4 +1,10 @@
 /target/
 .env
+.env.*
 *.log
 .DS_Store
+Thumbs.db
+.agents/
+*.swp
+*.swo
+*~
