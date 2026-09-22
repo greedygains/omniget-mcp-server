@@ -17,7 +17,8 @@ use std::path::Path;
 /// Arguments for the `pdf_text` extraction tool.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct PdfTextArgs {
-    /// Local filesystem path to the PDF document.
+    /// Local filesystem path or remote URL to the PDF document.
+    #[serde(alias = "url_or_path")]
     pub path: Option<String>,
     /// Alternative parameter name for remote URL.
     pub url: Option<String>,
@@ -241,8 +242,29 @@ fn extract_page_text_fallback(doc: &Document, page_id: lopdf::ObjectId) -> Strin
 
 /// JSON-RPC `tools/call` handler for `pdf_text`.
 pub async fn call_pdf_text(arguments: Value) -> Result<Value, anyhow::Error> {
-    let args: PdfTextArgs = serde_json::from_value(arguments)
-        .map_err(|e| anyhow!("Invalid arguments for pdf_text: {}", e))?;
+    let args: PdfTextArgs = match serde_json::from_value(arguments.clone()) {
+        Ok(a) => a,
+        Err(_) => {
+            let path_str = arguments
+                .get("path")
+                .or_else(|| arguments.get("url_or_path"))
+                .and_then(|v| v.as_str())
+                .map(|s| s.to_string());
+            let url_str = arguments
+                .get("url")
+                .and_then(|v| v.as_str())
+                .map(|s| s.to_string());
+            let pages_str = arguments
+                .get("pages")
+                .and_then(|v| v.as_str())
+                .map(|s| s.to_string());
+            PdfTextArgs {
+                path: path_str,
+                url: url_str,
+                pages: pages_str,
+            }
+        }
+    };
     match extract_pdf_text(args).await {
         Ok(res) => Ok(json!({
             "content": [

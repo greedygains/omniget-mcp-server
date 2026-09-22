@@ -178,49 +178,49 @@ mod tests {
 
     #[test]
     fn check_bearer_accepts_valid_lowercase_bearer() {
-        let headers = header_with("bearer secret-token-42");
-        assert!(check_bearer(&headers, "secret-token-42"));
+        let headers = header_with("bearer your-secure-token-42");
+        assert!(check_bearer(&headers, "your-secure-token-42"));
     }
 
     #[test]
     fn check_bearer_accepts_mixed_case_bearer() {
-        let headers = header_with("BeArEr secret-token-42");
-        assert!(check_bearer(&headers, "secret-token-42"));
+        let headers = header_with("BeArEr your-secure-token-42");
+        assert!(check_bearer(&headers, "your-secure-token-42"));
     }
 
     #[test]
     fn check_bearer_accepts_whitespace_padding() {
-        let headers = header_with("  Bearer   secret-token-42   ");
-        assert!(check_bearer(&headers, "secret-token-42"));
+        let headers = header_with("  Bearer   your-secure-token-42   ");
+        assert!(check_bearer(&headers, "your-secure-token-42"));
     }
 
     #[test]
     fn check_bearer_rejects_missing_header() {
         let headers = HeaderMap::new();
-        assert!(!check_bearer(&headers, "secret-token-42"));
+        assert!(!check_bearer(&headers, "your-secure-token-42"));
     }
 
     #[test]
     fn check_bearer_rejects_wrong_token() {
         let headers = header_with("Bearer wrong-token");
-        assert!(!check_bearer(&headers, "secret-token-42"));
+        assert!(!check_bearer(&headers, "your-secure-token-42"));
     }
 
     #[test]
     fn check_bearer_rejects_timing_safe_length_mismatch() {
-        let token = "super-secret-token-42";
-        assert!(!check_bearer(&header_with("Bearer super-secret"), token));
-        assert!(!check_bearer(&header_with("Bearer super-secret-token-42-extra"), token));
-        assert!(!check_bearer(&header_with("Bearer super-secret-token-43"), token));
+        let token = "your-super-token-42";
+        assert!(!check_bearer(&header_with("Bearer your-super"), token));
+        assert!(!check_bearer(&header_with("Bearer your-super-token-42-extra"), token));
+        assert!(!check_bearer(&header_with("Bearer your-super-token-43"), token));
     }
 
     #[test]
     fn check_bearer_rejects_invalid_scheme() {
-        assert!(!check_bearer(&header_with("Basic dXNlcjpwYXNz"), "secret"));
-        assert!(!check_bearer(&header_with("Token secret"), "secret"));
-        assert!(!check_bearer(&header_with("secret"), "secret"));
-        assert!(!check_bearer(&header_with("Bearersecret"), "secret"));
-        assert!(!check_bearer(&header_with("Bearer "), "secret"));
+        assert!(!check_bearer(&header_with("Basic dXNlcjpwYXNz"), "your-secure-token"));
+        assert!(!check_bearer(&header_with("Token your-secure-token"), "your-secure-token"));
+        assert!(!check_bearer(&header_with("your-secure-token"), "your-secure-token"));
+        assert!(!check_bearer(&header_with("Beareryour-secure-token"), "your-secure-token"));
+        assert!(!check_bearer(&header_with("Bearer "), "your-secure-token"));
     }
 
     #[test]
@@ -247,7 +247,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_middleware_gating_and_health_bypass() {
-        let auth_state = AuthState::new("secret-token-42");
+        let auth_state = AuthState::new("your-secure-token-42");
         let app = Router::new()
             .route("/health", get(health_handler))
             .route("/protected", get(|| async { "sensitive data" }))
@@ -281,7 +281,7 @@ mod tests {
         // 4. Protected endpoint with valid auth -> 200
         let req = Request::builder()
             .uri("/protected")
-            .header(header::AUTHORIZATION, "Bearer secret-token-42")
+            .header(header::AUTHORIZATION, "Bearer your-secure-token-42")
             .body(Body::empty())
             .unwrap();
         let res = app.oneshot(req).await.unwrap();

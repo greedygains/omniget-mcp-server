@@ -60,7 +60,7 @@ When connected to an MCP client (Claude Desktop, Cursor, etc.), the server expos
 | `x_post` | `url` *(string, required)* | Extracts a single X/Twitter post: author, full text, attached media, and engagement metrics. |
 | `x_thread` | `url` *(string, required)* | Unrolls an entire X/Twitter thread into a single, cohesive Markdown document. |
 | `web_to_markdown` | `url` *(string, required)* | Converts any public web page or news article into clean, clutter-free Markdown for LLMs. |
-| `pdf_text` | `url_or_path` *(string, required)* | Extracts readable text from a remote PDF link or local filesystem path. |
+| `pdf_text` | `path` / `url` *(string, required)* | Extracts readable text from a remote PDF link or local filesystem path (`pages` optional). |
 | `media_info` | `url` *(string, required)* | Universal video/audio metadata extraction across 1,800+ supported video platforms. |
 
 ---
@@ -187,12 +187,13 @@ Add to `~/.cursor/mcp.json` or project-level `.cursor/mcp.json`:
 | `POST` | `/messages` | Yes | Post JSON-RPC 2.0 messages to an active SSE session |
 | `POST` | `/mcp` | Yes | Streamable HTTP MCP JSON-RPC 2.0 endpoint |
 | `GET` | `/openapi.json`| Yes | OpenAPI 3.1 schema specification |
-| `POST` | `/api/facebook`| Yes | Direct REST endpoint for Facebook extraction |
-| `POST` | `/api/instagram`| Yes | Direct REST endpoint for Instagram extraction |
+| `POST` | `/api/facebook` *(alias: `/api/facebook/post`)* | Yes | Direct REST endpoint for Facebook extraction |
+| `POST` | `/api/instagram` *(alias: `/api/instagram/post`)* | Yes | Direct REST endpoint for Instagram extraction |
 | `POST` | `/api/x/post` | Yes | Direct REST endpoint for X/Twitter extraction |
 | `POST` | `/api/x/thread` | Yes | Direct REST endpoint for X thread unrolling |
-| `POST` | `/api/markdown`| Yes | Direct REST endpoint for Web-to-Markdown |
-| `POST` | `/api/pdf` | Yes | Direct REST endpoint for PDF text extraction |
+| `POST` | `/api/markdown` *(alias: `/api/web/markdown`)* | Yes | Direct REST endpoint for Web-to-Markdown |
+| `POST` | `/api/pdf` *(alias: `/api/pdf/text`)* | Yes | Direct REST endpoint for PDF text extraction |
+| `POST` | `/api/media` *(alias: `/api/media/info`)* | Yes | Direct REST endpoint for universal media metadata |
 
 ---
 

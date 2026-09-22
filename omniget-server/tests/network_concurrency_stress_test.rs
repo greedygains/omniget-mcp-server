@@ -207,7 +207,7 @@ async fn test_cors_options_preflight_unconditional_across_all_routes() {
 
 #[tokio::test]
 async fn test_edge_case_huge_authorization_header() {
-    let token = "expected-secret-token";
+    let token = "your-expected-token";
     let server = TestServer::spawn_with_token(token).await;
     let client = reqwest::Client::new();
 
@@ -232,20 +232,20 @@ async fn test_edge_case_huge_authorization_header() {
 
 #[tokio::test]
 async fn test_edge_case_unusual_characters_in_authorization() {
-    let token = "valid-secret-42";
+    let token = "your-valid-token-42";
     let server = TestServer::spawn_with_token(token).await;
     let client = reqwest::Client::new();
 
     let adversarial_headers = [
         "Bearer   ",                                      // whitespace only after Bearer
         "Bearer \t\t  ",                                  // tab characters
-        "Bearer valid-secret-42\x00extra",                // embedded null byte if parsed
-        "Bearer valid-secret-42-suffix",                  // longer prefix match
-        "Bearer valid-secre",                             // shorter prefix match
+        "Bearer your-valid-token-42\x00extra",            // embedded null byte if parsed
+        "Bearer your-valid-token-42-suffix",              // longer prefix match
+        "Bearer your-valid-tok",                          // shorter prefix match
         "Bearer ~!@#$%^&*()_+`-={}|[]\\:\";'<>?,./",      // special symbols
-        "Bearer   valid-secret-42   extra",               // interior whitespace
-        "Bearer\tvalid-secret-42",                        // tab separator instead of space
-        "Bearer\r\nvalid-secret-42",                      // crlf injection attempt (reqwest rejects or server rejects)
+        "Bearer   your-valid-token-42   extra",           // interior whitespace
+        "Bearer\tyour-valid-token-42",                    // tab separator instead of space
+        "Bearer\r\nyour-valid-token-42",                  // crlf injection attempt (reqwest rejects or server rejects)
     ];
 
     for val in adversarial_headers {
@@ -269,7 +269,7 @@ async fn test_edge_case_unusual_characters_in_authorization() {
 
 #[tokio::test]
 async fn test_edge_case_multiple_authorization_headers() {
-    let token = "valid-secret-42";
+    let token = "your-valid-token-42";
     let server = TestServer::spawn_with_token(token).await;
 
     // Send raw HTTP request with duplicate Authorization headers

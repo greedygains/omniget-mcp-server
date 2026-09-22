@@ -532,3 +532,44 @@ async fn test_t4_scenario_2_chatgpt_custom_action_workflow() {
         .contains("ChatGPT Action Executive Summary Report"));
     assert!(pdf_body["pages"].as_u64().unwrap() >= 1);
 }
+
+#[tokio::test]
+async fn test_rest_route_aliases_and_parameter_flexibility() {
+    let server = TestServer::start().await;
+    let mock = MockWebsite::start().await;
+
+    // 1. /api/markdown alias for /api/web/markdown
+    let article_url = mock.url("/article-simple");
+    let res = server
+        .post_json_authed("/api/markdown", &json!({ "url": article_url }))
+        .await;
+    assert_eq!(res.status(), StatusCode::OK);
+    let body: Value = res.json().await.expect("parse markdown body");
+    assert!(body["markdown"].as_str().unwrap().contains("Simple Article Title"));
+
+    // 2. /api/pdf alias for /api/pdf/text with url_or_path alias
+    let test_pdf = create_test_pdf("Alias Route Verification", 1);
+    let pdf_path = test_pdf.path().to_str().unwrap();
+    let res_pdf = server
+        .post_json_authed("/api/pdf", &json!({ "url_or_path": pdf_path }))
+        .await;
+    assert_eq!(res_pdf.status(), StatusCode::OK);
+    let pdf_body: Value = res_pdf.json().await.expect("parse pdf body");
+    assert!(pdf_body["text"].as_str().unwrap().contains("Alias Route Verification"));
+
+    // 3. /api/facebook and /api/instagram convenience route aliases respond with 400 on invalid domain
+    let res_fb = server
+        .post_json_authed("/api/facebook", &json!({ "url": "https://notfacebook.com/posts/123" }))
+        .await;
+    assert_eq!(res_fb.status(), StatusCode::BAD_REQUEST);
+
+    let res_ig = server
+        .post_json_authed("/api/instagram", &json!({ "url": "https://notinstagram.com/p/123" }))
+        .await;
+    assert_eq!(res_ig.status(), StatusCode::BAD_REQUEST);
+
+    let res_media = server
+        .post_json_authed("/api/media", &json!({ "url": "not-a-url" }))
+        .await;
+    assert_eq!(res_media.status(), StatusCode::BAD_REQUEST);
+}

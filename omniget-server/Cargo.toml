@@ -3,7 +3,10 @@ name = "omniget-server"
 version = "0.1.0"
 edition = "2021"
 description = "Standalone headless MCP & REST server for OmniGet"
-authors = ["OmniGet Authors"]
+authors = ["OmniGet Authors", "Greedy Gains"]
+license = "GPL-3.0"
+repository = "https://github.com/greedygains/omniget-mcp-server"
+homepage = "https://github.com/greedygains/omniget-mcp-server"
 publish = false
 
 [lib]
